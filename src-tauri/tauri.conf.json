@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "肯天玉佩",
+  "version": "3.0.0",
+  "identifier": "com.kingint.mange.pc",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "酒店智能设备管理工具",
+    "longDescription": "肯天玉佩：酒店 RCU 客房控制器、智能门锁等设备的发现、监控、配置与固件管理工具。",
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0NzQ0NjBGNjIzNUM3NUIKUldSYnh6VmlEMFowcEdXWEFXa2xBY2FSeVVvOHBiaUJWczVkRjZjVS9pcmM0WUpYdWNwVnZqMU0K",
+      "endpoints": [
+        "https://mange.kingint.com/app/kt-mange-pc/latest.json"
+      ]
+    }
+  }
+}

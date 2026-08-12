@@ -1,0 +1,13 @@
+[package]
+name = "rcu-simulator"
+version = "1.0.0"
+description = "肯天 RCU 设备协议级模拟器（无硬件联调替代手段）"
+edition = "2021"
+
+[[bin]]
+name = "rcu-simulator"
+path = "main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["net", "rt-multi-thread", "macros", "time"] }
+hex = "0.4"

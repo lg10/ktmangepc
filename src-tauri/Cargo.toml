@@ -1,0 +1,51 @@
+[package]
+name = "kt-mange-pc"
+version = "3.0.0"
+description = "肯天玉佩 - 酒店智能设备管理工具"
+authors = ["KinginT 肯天科技集团"]
+edition = "2021"
+
+[lib]
+name = "kt_mange_pc_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = [
+    "net",
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+    "io-util",
+] }
+tokio-util = "0.7"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+hex = "0.4"
+md5 = "0.7"
+base64 = "0.22"
+socket2 = { version = "0.5", features = ["all"] }
+local-ip-address = "0.6"
+mac_address = "1.1"
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

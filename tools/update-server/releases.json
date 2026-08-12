@@ -1,0 +1,22 @@
+{
+  "latest": {
+    "darwin-aarch64": {
+      "version": "3.0.0",
+      "notes": "首版 Tauri 2.0 迁移：启动检查窗、扫码登录、RCU/门锁扫描、网络配置与基础信息下发、DHCP 直连。",
+      "url": "https://cdn.kingint.com/kt/3.0.0/ken-tian-yu-pei_3.0.0_aarch64.dmg",
+      "signatureFile": "app.dmg.sig"
+    },
+    "windows-x86_64": {
+      "version": "3.0.0",
+      "notes": "首版 Tauri 2.0 迁移。",
+      "url": "https://cdn.kingint.com/kt/3.0.0/ken-tian-yu-pei_3.0.0_x64-setup.exe",
+      "signatureFile": "app.exe.sig"
+    },
+    "linux-x86_64": {
+      "version": "3.0.0",
+      "notes": "首版 Tauri 2.0 迁移。",
+      "url": "https://cdn.kingint.com/kt/3.0.0/ken-tian-yu-pei_3.0.0_amd64.AppImage",
+      "signatureFile": "app.AppImage.sig"
+    }
+  }
+}

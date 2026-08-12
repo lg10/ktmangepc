@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist-cdn/
+src-tauri/target/
+
+# 更新签名私钥（严禁提交；公钥 .pub 可提交）
+src-tauri/keys/*.key
+!src-tauri/keys/*.key.pub
+
+# Apple 开发者证书私钥（严禁提交）
+src-tauri/keys/*.p12
+.env.apple
+
+# 系统/编辑器杂项
+.DS_Store
+*.log

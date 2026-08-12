@@ -1,0 +1,130 @@
+# 发布构建：macOS(苹果芯片+Intel)/Windows/Linux 全平台打包
+#
+# 触发方式二选一：
+#   1. 推送 v* 标签：git tag v3.1.0 && git push origin v3.1.0
+#   2. GitHub 仓库 Actions 页面手动触发（workflow_dispatch）
+#
+# 前置条件：仓库 Settings → Secrets 配置 TAURI_SIGNING_PRIVATE_KEY
+# （内容为 src-tauri/keys/kt-mange-pc.key 文件全文；本项目私钥无密码，无需 PASSWORD）
+#
+# 产物：Actions Run 页面下载各平台 bundle（含安装包 + .sig + latest.json），
+# 将 latest.json 合并后连同安装包上传到 CDN：https://mange.kingint.com/app/kt-mange-pc/
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      # macOS 签名+公证：Secrets 配置后自动启用，未配置则跳过（产出未签名包）
+      - name: Inject macOS signing env
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_CERTIFICATE" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$APPLE_CERTIFICATE"
+              echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+              echo "APPLE_ID=$APPLE_ID"
+              echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+            } >> "$GITHUB_ENV"
+          else
+            echo "Apple signing secrets not configured, build unsigned"
+          fi
+
+      # updaterJson 自动生成 latest.json；updaterJsonKeepUniversal 兼容通用包
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          tauriScript: pnpm tauri
+          args: --target ${{ matrix.target }} --verbose
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.target }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/
+          if-no-files-found: ignore
+
+  # 各平台 latest.json 只含自己的 platforms 条目，
+  # 这里合并成一份完整的 latest.json 供上传 CDN（客户端按平台键取对应 url+signature）
+  merge-updater:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: bundles
+          merge-multiple: true
+
+      # 合并各平台 latest.json + url 改写为 /mac|windows|linux/ 子目录 + 产物重命名拷贝
+      - name: Prepare CDN directory
+        run: node scripts/prepare-cdn.js bundles dist-cdn
+
+      - name: Upload CDN directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdn-upload
+          path: dist-cdn
