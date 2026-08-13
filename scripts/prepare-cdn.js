@@ -63,24 +63,34 @@ for (const f of findLatestJsons(path.resolve(searchRoot))) {
 }
 
 // ---------- 路径 2：本地无 latest.json → 从 .sig 合成 ----------
-function synthFromSig(root) {
-  if (!fs.existsSync(root)) return;
-  for (const e of fs.readdirSync(root, { withFileTypes: true })) {
+// 递归扫描（CI 下载产物可能带 src-tauri/target/... 前缀层级）
+function synthFromSig(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const p = path.join(dir, e.name);
     const key = TRIPLE_TO_KEY[e.name];
-    if (!e.isDirectory() || !key || merged.platforms[key]) continue;
-    const dir = DIR_OF(key);
-    const bundleRoot = path.join(root, e.name, "release", "bundle");
-    const artDir = path.join(bundleRoot, SUBDIR_OF(dir));
-    if (!fs.existsSync(artDir)) continue;
-    const sig = fs.readdirSync(artDir).find((n) => n.endsWith(".sig"));
-    if (!sig) continue;
-    merged.platforms[key] = {
-      signature: fs.readFileSync(path.join(artDir, sig), "utf8").trim(),
-      url: sig.slice(0, -4), // 去掉 .sig 即更新包文件名（占位，后面会改写）
-      version: merged.version,
-    };
-    bundleRootOf[key] = bundleRoot;
+    if (key && !merged.platforms[key]) {
+      const bundleDir = path.join(p, "release", "bundle");
+      if (collectPlatform(key, bundleDir)) continue;
+    }
+    synthFromSig(p);
   }
+}
+
+function collectPlatform(key, bundleRoot) {
+  const dir = DIR_OF(key);
+  const artDir = path.join(bundleRoot, SUBDIR_OF(dir));
+  if (!fs.existsSync(artDir)) return false;
+  const sig = fs.readdirSync(artDir).find((n) => n.endsWith(".sig"));
+  if (!sig) return false;
+  merged.platforms[key] = {
+    signature: fs.readFileSync(path.join(artDir, sig), "utf8").trim(),
+    url: sig.slice(0, -4), // 去掉 .sig 即更新包文件名（占位，后面会改写）
+    version: merged.version,
+  };
+  bundleRootOf[key] = bundleRoot;
+  return true;
 }
 
 if (!Object.keys(merged.platforms).length) {
