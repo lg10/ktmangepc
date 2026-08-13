@@ -100,7 +100,7 @@ jobs:
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bundle-${{ matrix.target }}
+          name: 肯天玉佩-${{ matrix.target }}
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: ignore
@@ -115,7 +115,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: bundle-*
+          pattern: 肯天玉佩-*
           path: bundles
           # 不用 merge-multiple：mac 双架构更新包同名会互相覆盖，各平台需独立子目录
 
