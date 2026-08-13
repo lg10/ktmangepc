@@ -162,23 +162,41 @@ impl FileStore {
             FileKind::Upgrade => data.get("size").and_then(|v| v.as_i64()).unwrap_or(1024),
         };
 
-        // 已存在检查（与原逻辑一致：同 id 不同 size 禁止混存）
-        let exists = self
-            .db
-            .with_conn(|conn| {
-                conn.query_row(
-                    &format!("SELECT size FROM {} WHERE uid = ?", kind.table()),
-                    [uid],
-                    |r| r.get::<_, i64>(0),
-                )
-                .optional()
-            })
-            .map_err(|e| e.to_string())?;
+        // 已存在检查（对齐原版两表语义）：
+        // - 升级文件（UpdateFile 有 size 列）：同 id 不同 size 禁止混存，同 size 提示已存在
+        // - 配置文件（ConfigFile 无 size 列）：已存在时复用行并重新下载分包，不报错
+        let exists = match kind {
+            FileKind::Upgrade => self
+                .db
+                .with_conn(|conn| {
+                    conn.query_row(
+                        "SELECT size FROM update_file WHERE uid = ?",
+                        [uid],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .optional()
+                })
+                .map_err(|e| e.to_string())?,
+            FileKind::Config => self
+                .db
+                .with_conn(|conn| {
+                    conn.query_row(
+                        "SELECT 1 FROM config_file WHERE uid = ?",
+                        [uid],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .optional()
+                })
+                .map_err(|e| e.to_string())?,
+        };
         if let Some(old_size) = exists {
-            if old_size != size {
-                return Err("新老版本升级文件不能重复，请先删除另一个版本文件库中文件".into());
+            if matches!(kind, FileKind::Upgrade) {
+                if old_size != size {
+                    return Err("新老版本升级文件不能重复，请先删除另一个版本文件库中文件".into());
+                }
+                return Err("文件已存在，请直接选中升级".into());
             }
-            return Err("文件已存在，请直接选中升级".into());
+            // config：下方事务会 DELETE 旧分包并 INSERT OR REPLACE 行，直接续下载
         }
 
         // 下载
