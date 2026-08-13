@@ -391,8 +391,8 @@ async fn handle_packet(
     };
 
     match header.reg_addr {
-        protocol::reg::UDP_REVERT => {
-            // 设备对 0xFE00 发现的应答（0xFE01），载荷为 UdpModel
+        protocol::reg::NET_WORK_CONFIGURE | protocol::reg::READ_NET_WORK_CONFIGURE => {
+            // 设备对 0xFE00 发现的应答（0xFE10/0xFE11，func 0x03），载荷为 UdpModel
             let payload = payload_of(data, &header);
             let model = match UdpModel::parse(payload) {
                 Some(m) => m,

@@ -183,21 +183,26 @@ pub fn model_name(code: u16) -> String {
     }
 }
 
-/// 授权方式/状态显示（原 NetWorkMsg.cs）
+/// 授权方式/状态显示（与原 NetWorkMsg.cs 一致）
 pub fn author_text(way: u8, state: u8) -> String {
     let way_s = match way {
-        4 => "永久授权",
-        2 => "到期授权",
-        _ => "未知授权",
+        4 => "[永久]",
+        2 => "[到期]",
+        _ => "[未知]",
     };
-    let state_s = if state == 0 { "正常" } else { "已过期" };
+    let state_s = if state == 0 { "[正常]" } else { "[过期]" };
     format!("{way_s}\n{state_s}")
 }
 
-/// 版本号：protocolVersion.hardVersion.swap(softVersion)
-pub fn version_text(protocol_version: u8, hard_version: u8, soft_version: u16) -> String {
+/// 版本号：protocolVersion(2 字节 HEX).hardVersion.softVersion(换字节)，与原显示一致
+pub fn version_text(protocol_version: u16, hard_version: u8, soft_version: u16) -> String {
     let soft = soft_version.swap_bytes();
-    format!("{protocol_version}.{hard_version}.{soft}")
+    format!("{protocol_version:04X}.{hard_version}.{soft}")
+}
+
+/// 端口字段按“每字节十进制”拼接显示（如 0x2B26 → 4338，与原 NetWorkMsg 一致）
+fn port_text(port: u16) -> String {
+    format!("{}{}", port >> 8, port & 0xFF)
 }
 
 fn read_ipv4(p: &[u8], off: usize) -> Ipv4Addr {
@@ -216,7 +221,7 @@ fn read_ascii(p: &[u8], off: usize, len: usize) -> String {
 pub struct UdpModel {
     pub equip_id: String,
     pub equipment_model: u16,
-    pub protocol_version: u8,
+    pub protocol_version: u16,
     pub soft_version: u16,
     pub hard_version: u8,
     pub authorization_way: u8,
@@ -235,6 +240,7 @@ pub struct UdpModel {
     pub url: String,
     pub server_ip: Ipv4Addr,
     pub server_port: u16,
+    pub rcu_dns: Ipv4Addr,
     pub run_server_flag: u8,
     pub run_url: String,
     pub run_ip: Ipv4Addr,
@@ -242,10 +248,10 @@ pub struct UdpModel {
 }
 
 impl UdpModel {
-    /// 解析 Header 之后的二进制载荷
+    /// 解析 Header 之后的二进制载荷（布局与原 UdpModel.cs 一致：protocolVersion 2 字节、含 rcuDns）
     pub fn parse(p: &[u8]) -> Option<UdpModel> {
-        // 最小长度 = 8+2+1+2+1+1+1+4+1+1+1+1+1+4+4+4+6+1+32+4+2+1+32+4+2 = 121
-        if p.len() < 121 {
+        // 最小长度 = 8+2+2+2+1+1+1+4+1+1+1+1+1+4+4+4+6+1+32+4+2+4+1+32+4+2 = 125
+        if p.len() < 125 {
             return None;
         }
         let mut off = 0usize;
@@ -253,8 +259,8 @@ impl UdpModel {
         off += 8;
         let equipment_model = u16::from_be_bytes([p[off], p[off + 1]]);
         off += 2;
-        let protocol_version = p[off];
-        off += 1;
+        let protocol_version = u16::from_be_bytes([p[off], p[off + 1]]);
+        off += 2;
         let soft_version = u16::from_be_bytes([p[off], p[off + 1]]);
         off += 2;
         let hard_version = p[off];
@@ -291,6 +297,8 @@ impl UdpModel {
         off += 4;
         let server_port = u16::from_be_bytes([p[off], p[off + 1]]);
         off += 2;
+        let rcu_dns = read_ipv4(p, off);
+        off += 4;
         let run_server_flag = p[off];
         off += 1;
         let run_url = read_ascii(p, off, 32);
@@ -321,6 +329,7 @@ impl UdpModel {
             url,
             server_ip,
             server_port,
+            rcu_dns,
             run_server_flag,
             run_url,
             run_ip,
@@ -328,30 +337,28 @@ impl UdpModel {
         })
     }
 
-    /// 服务器地址显示：flag=1 用域名，否则用 IP
+    /// 设置服务器显示：flag=1 用 IP，否则域名；端口按字节十进制拼接；附 DNS（与原显示一致）
     pub fn server_text(&self) -> String {
-        if self.server_flag == 1 {
-            format!("{}:{}", self.url, self.server_port)
+        let head = if self.server_flag == 1 {
+            format!("【IP方式】{}:{}", self.server_ip, port_text(self.server_port))
         } else {
-            format!("{}:{}", self.server_ip, self.server_port)
-        }
+            format!("【域名方式】{}:{}", self.url, port_text(self.server_port))
+        };
+        format!("{head}\n【DNS】{}", self.rcu_dns)
     }
 
     pub fn run_server_text(&self) -> String {
-        if self.run_server_flag == 1 {
-            format!("{}:{}", self.run_url, self.run_port)
+        if self.run_ip.octets()[0] == 0 {
+            "未连接到服务器".into()
         } else {
-            format!("{}:{}", self.run_ip, self.run_port)
+            format!("{}:{}", self.run_ip, port_text(self.run_port))
         }
     }
 
-    /// 网络配置显示：flag=1 动态(DHCP) 0 静态
+    /// 网络配置显示：flag=1 静态，否则 DHCP；附 网关/掩码（与原显示一致）
     pub fn network_text(&self) -> String {
-        if self.rcu_ip_flag == 1 {
-            "动态获取".into()
-        } else {
-            format!("{}\n{}\n{}", self.rcu_ip, self.rcu_mask, self.rcu_gateway)
-        }
+        let head = if self.rcu_ip_flag == 1 { "【静态】" } else { "【DHCP】" };
+        format!("{head}{}\n【网/掩】{}/{}", self.rcu_ip, self.rcu_gateway, self.rcu_mask)
     }
 
     pub fn base_num_text(&self) -> String {
