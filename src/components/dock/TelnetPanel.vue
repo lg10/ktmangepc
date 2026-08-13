@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { api, EVENTS } from "@/lib/api";
+import { GbkDecoder, gbkEncode } from "@/lib/telnetCodec";
 import { useTelnetStore } from "@/stores/telnet";
 import { Loader2, RefreshCw, WifiOff } from "lucide-vue-next";
 
@@ -16,6 +17,8 @@ let term: Terminal | null = null;
 let fit: FitAddon | null = null;
 let unlisten: UnlistenFn | null = null;
 let ro: ResizeObserver | null = null;
+// 设备中文输出为 GBK（原 TelnetDialog 用 ASCII 流，中文同样乱码），这里按 GBK 解码、ASCII 透传
+const decoder = new GbkDecoder();
 
 const tab = computed(() => telnetStore.tabs.find((t) => t.id === props.id));
 
@@ -46,12 +49,14 @@ onMounted(async () => {
   fit.fit();
   term.writeln(`\x1b[90m── Telnet ${props.id} (${props.ip}) ──\x1b[0m`);
   term.onData((d) => {
-    api.telnetWrite(props.id, Array.from(new TextEncoder().encode(d))).catch(() => {});
+    // 输入侧同样按 GBK 编码下发，保证中文命令设备可识别
+    api.telnetWrite(props.id, Array.from(gbkEncode(d))).catch(() => {});
   });
 
   unlisten = await listen<{ id: string; data: string }>(EVENTS.TELNET_DATA, (e) => {
     if (e.payload.id !== props.id) return;
-    term?.write(b64ToBytes(e.payload.data));
+    const text = decoder.push(b64ToBytes(e.payload.data));
+    if (text) term?.write(text);
   });
 
   ro = new ResizeObserver(() => {
@@ -78,6 +83,7 @@ onBeforeUnmount(() => {
 
 function reconnect() {
   telnetStore.reconnect(props.id);
+  decoder.reset();
   term?.clear();
 }
 </script>
