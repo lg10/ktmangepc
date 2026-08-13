@@ -44,7 +44,7 @@ pub fn run() {
             app.manage(state);
 
             // 主窗口（conf 中不预建）：macOS 用原生 overlay 标题栏，
-            // 获得系统圆角/阴影/真红绿灯（微信式观感）；其他平台保持自定义无边框
+            // 获得系统圆角/阴影/真红绿灯（微信式观感）；其他平台自定义无边框（自绘三键）
             let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",

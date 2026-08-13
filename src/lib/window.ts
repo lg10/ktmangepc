@@ -1,7 +1,7 @@
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-/** macOS：原生 overlay 标题栏（圆角/阴影/真红绿灯）；其他平台自定义无边框 */
+/** macOS：原生 overlay 标题栏（圆角/阴影/真红绿灯）；其他平台自定义无边框（自绘三键，标题栏即自定义内容栏） */
 export const isMac = /Mac/i.test(navigator.userAgent);
 
 /** IDEA 式启动检查小窗 */
