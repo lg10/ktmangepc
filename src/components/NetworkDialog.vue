@@ -154,18 +154,22 @@ async function send() {
             </div>
             <div class="space-y-1.5">
               <Label>{{ t("network.ip") }}</Label>
-              <Input v-model="form.ip" placeholder="192.168.1.100" />
+              <Input
+                v-model="form.ip"
+                placeholder="192.168.1.100"
+                :disabled="form.ipFlag === '0'"
+              />
             </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="space-y-1.5">
               <Label>{{ t("network.mask") }}</Label>
-              <Input v-model="form.mask" />
+              <Input v-model="form.mask" :disabled="form.ipFlag === '0'" />
             </div>
             <div class="space-y-1.5">
               <Label>{{ t("network.gateway") }}</Label>
-              <Input v-model="form.gateway" />
+              <Input v-model="form.gateway" :disabled="form.ipFlag === '0'" />
             </div>
           </div>
 
