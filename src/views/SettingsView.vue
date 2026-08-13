@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, markRaw, onMounted, onUnmounted, ref } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
@@ -106,7 +106,9 @@ async function checkUpdate() {
     const update = await check();
     checked.value = true;
     if (update) {
-      pendingUpdate.value = update;
+      // Update 实例含 # 私有字段，必须 markRaw 阻止 Vue 响应式代理包装，
+      // 否则调用 downloadAndInstall 时报 Cannot read private member
+      pendingUpdate.value = markRaw(update);
       toast({ title: `发现新版本 v${update.version}`, variant: "success" });
     } else {
       pendingUpdate.value = null;
