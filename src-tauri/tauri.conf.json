@@ -17,7 +17,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg", "nsis", "deb", "appimage"],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
@@ -31,6 +31,12 @@
     "longDescription": "肯天玉佩：酒店 RCU 客房控制器、智能门锁等设备的发现、监控、配置与固件管理工具。",
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": true
+      }
     }
   },
   "plugins": {
