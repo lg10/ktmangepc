@@ -63,19 +63,22 @@ for (const f of findLatestJsons(path.resolve(searchRoot))) {
 }
 
 // ---------- 路径 2：本地无 latest.json → 从 .sig 合成 ----------
-// 递归扫描（CI 下载产物可能带 src-tauri/target/... 前缀层级）
+// 递归扫描（CI 下载产物为 bundles/bundle-<triple>/{macos,nsis,appimage}/，
+// 本地为 <triple>/release/bundle/...，两种布局都兼容）
 function synthFromSig(dir) {
   if (!fs.existsSync(dir)) return;
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!e.isDirectory()) continue;
     const p = path.join(dir, e.name);
-    const key = TRIPLE_TO_KEY[e.name];
-    if (key && !merged.platforms[key]) {
-      const bundleDir = path.join(p, "release", "bundle");
-      if (collectPlatform(key, bundleDir)) continue;
-    }
+    const key = TRIPLE_TO_KEY[e.name] || TRIPLE_TO_KEY[e.name.replace(/^bundle-/, "")];
+    if (key && !merged.platforms[key] && tryCollect(key, p)) continue;
     synthFromSig(p);
   }
+}
+
+function tryCollect(key, dir) {
+  // dir 本身即 bundle 根（CI 布局）或 dir/release/bundle（本地布局）
+  return collectPlatform(key, dir) || collectPlatform(key, path.join(dir, "release", "bundle"));
 }
 
 function collectPlatform(key, bundleRoot) {

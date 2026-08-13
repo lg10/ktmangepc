@@ -117,7 +117,7 @@ jobs:
         with:
           pattern: bundle-*
           path: bundles
-          merge-multiple: true
+          # 不用 merge-multiple：mac 双架构更新包同名会互相覆盖，各平台需独立子目录
 
       # 合并各平台 latest.json + url 改写为 /mac|windows|linux/ 子目录 + 产物重命名拷贝
       - name: Prepare CDN directory
