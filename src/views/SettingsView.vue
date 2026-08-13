@@ -48,7 +48,7 @@ onMounted(async () => {
   try {
     appVersion.value = await getVersion();
   } catch {
-    appVersion.value = "3.0.0";
+    appVersion.value = "3.0.1";
   }
   await refresh();
   unlisten = await listen<DhcpLease>(EVENTS.DHCP_LEASE, (e) => {

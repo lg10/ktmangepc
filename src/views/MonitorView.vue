@@ -98,6 +98,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => ro?.disconnect());
 
+/** 房间号显示：未匹配（空/0）显示“未匹配” */
+function roomLabel(r: string) {
+  return !r || r === "0" ? "未匹配" : r;
+}
+
 /** 排序：默认按房间号升序；点击表头切换，再点同列反向 */
 const sortKey = ref<ColKey>("roomNum");
 const sortDir = ref<"asc" | "desc">("asc");
@@ -132,8 +137,10 @@ function cmpDevices(a: RcuDevice, b: RcuDevice, key: ColKey) {
   if (key === "roomNum") {
     const na = parseInt(a.roomNum, 10);
     const nb = parseInt(b.roomNum, 10);
-    const ra = Number.isNaN(na) ? Number.MAX_SAFE_INTEGER : na;
-    const rb = Number.isNaN(nb) ? Number.MAX_SAFE_INTEGER : nb;
+    const unmatched = (r: string, n: number) =>
+      !r || r === "0" || Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
+    const ra = unmatched(a.roomNum, na);
+    const rb = unmatched(b.roomNum, nb);
     if (ra !== rb) return ra - rb;
   }
   return naturalCompare(va, vb) || a.equipId.localeCompare(b.equipId);
@@ -323,7 +330,7 @@ const drawerRows = computed(() => {
   const d = drawerDevice.value;
   if (!d) return [] as { label: string; value: string; copy?: string }[];
   return [
-    { label: "房间号", value: d.roomNum || "—" },
+    { label: "房间号", value: roomLabel(d.roomNum) },
     { label: "房型", value: d.roomTypeName || "—" },
     { label: "栋 / 层", value: `${d.buildName || "—"} / ${d.floorName || "—"}` },
     { label: "MAC", value: d.rcuMac, copy: d.rcuMac },
@@ -425,7 +432,7 @@ function cellValue(d: RcuDevice, key: ColKey): string {
     case "equipId":
       return d.equipId;
     case "roomNum":
-      return d.roomNum || "—";
+      return roomLabel(d.roomNum);
     case "version":
       return d.version;
     case "model":

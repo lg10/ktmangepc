@@ -113,7 +113,7 @@ function confirm() {
               </td>
               <td class="py-2 px-3 font-mono">{{ d.equipId }}</td>
               <td class="py-2 px-3 font-mono">{{ d.ip }}</td>
-              <td class="py-2 px-3">{{ d.roomNum || "—" }}</td>
+              <td class="py-2 px-3">{{ !d.roomNum || d.roomNum === "0" ? "未匹配" : d.roomNum }}</td>
               <td class="py-2 px-3">{{ d.version }}</td>
             </tr>
           </tbody>

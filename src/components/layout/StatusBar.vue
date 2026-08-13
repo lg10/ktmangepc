@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
 import { useDeviceStore } from "@/stores/device";
 import { useTaskStore } from "@/stores/task";
 import { useHotelStore } from "@/stores/hotel";
@@ -31,6 +32,16 @@ const modeLabel = computed(() => {
 function jumpDock(tab: string) {
   uiStore.openDock(tab);
 }
+
+/** 右下角版本号：读 Tauri 配置（跟随 Cargo/conf 版本） */
+const appVersion = ref("");
+onMounted(async () => {
+  try {
+    appVersion.value = await getVersion();
+  } catch {
+    appVersion.value = "";
+  }
+});
 </script>
 
 <template>
@@ -77,7 +88,7 @@ function jumpDock(tab: string) {
       <span v-if="hotelStore.state.synced" class="hidden min-[1180px]:inline">
         酒店已同步（{{ hotelStore.state.roomCount }} 房间）
       </span>
-      <span class="hidden min-[1100px]:inline">肯天科技 · v3.0.0</span>
+      <span class="hidden min-[1100px]:inline">肯天科技 · v{{ appVersion || "—" }}</span>
       <button
         class="flex items-center gap-1 hover:text-foreground transition-colors"
         :title="uiStore.dockOpen ? '收起底部面板' : '展开底部面板'"
