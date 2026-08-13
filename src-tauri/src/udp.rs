@@ -76,6 +76,14 @@ impl DeviceEntry {
             ip: m.rcu_ip.to_string(),
             server: m.server_text(),
             run_server: m.run_server_text(),
+            ip_flag: m.rcu_ip_flag,
+            mask: m.rcu_mask.to_string(),
+            gateway: m.rcu_gateway.to_string(),
+            dns: m.rcu_dns.to_string(),
+            server_flag: m.server_flag,
+            server_url: m.url.clone(),
+            server_ip: m.server_ip.to_string(),
+            server_port: protocol::port_value(m.server_port),
             count: if self.offline_count == 0 {
                 "正常".into()
             } else {

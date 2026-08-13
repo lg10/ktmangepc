@@ -34,6 +34,15 @@ export interface RcuDevice {
   ip: string;
   server: string;
   runServer: string;
+  /** 结构化参数（配置对话框回填用，勿解析显示文本） */
+  ipFlag: number;
+  mask: string;
+  gateway: string;
+  dns: string;
+  serverFlag: number;
+  serverUrl: string;
+  serverIp: string;
+  serverPort: number;
   /** 正常 / [n/6] 掉线计数 */
   count: string;
   lastSeen: number;

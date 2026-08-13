@@ -44,44 +44,36 @@ function defaultGateway(ip: string) {
   return parts.length === 4 ? `${parts[0]}.${parts[1]}.${parts[2]}.1` : "";
 }
 
-/** 解析设备当前 IP 侧参数（静态时 network 为 ip\n掩码\n网关，DHCP 时为「动态获取」） */
-function parseIpSide(d: RcuDevice) {
-  const lines = (d.network || "")
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const dhcp = (d.network || "") === "动态获取" || lines.length < 3;
+/** 设备当前 IP 侧结构化参数（与原版一致直接读 UdpModel，不解析显示文本） */
+function deviceIpSide(d: RcuDevice) {
   return {
-    ipFlag: dhcp ? 0 : 1,
-    ip: lines[0] || d.ip,
-    mask: lines[1] || "255.255.255.0",
-    gateway: lines[2] || defaultGateway(d.ip),
+    ipFlag: d.ipFlag,
+    ip: d.ip,
+    mask: d.mask || "255.255.255.0",
+    gateway: d.gateway || defaultGateway(d.ip),
+    dns: d.dns || "223.5.5.5",
   };
 }
 
-/** 解析设备当前服务器侧参数（server 形如 host:port） */
-function parseServerSide(d: RcuDevice) {
-  const s = d.server || "";
-  const idx = s.lastIndexOf(":");
-  const host = idx > -1 ? s.slice(0, idx) : s;
-  const port = idx > -1 ? Number(s.slice(idx + 1)) || 0 : 0;
-  const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+/** 设备当前服务器侧结构化参数 */
+function deviceServerSide(d: RcuDevice) {
   return {
-    serverFlag: isIp ? 1 : 0,
-    serverUrl: isIp ? "" : host,
-    serverIp: isIp ? host : "",
-    serverPort: port,
+    serverFlag: d.serverFlag,
+    serverUrl: d.serverFlag === 1 ? "" : d.serverUrl,
+    serverIp: d.serverFlag === 1 ? d.serverIp : "",
+    serverPort: d.serverPort,
   };
 }
 
 watch(open, (v) => {
   if (!v || !props.device) return;
-  const ipSide = parseIpSide(props.device);
+  const ipSide = deviceIpSide(props.device);
   form.ipFlag = String(ipSide.ipFlag);
   form.ip = ipSide.ip;
   form.mask = ipSide.mask;
   form.gateway = ipSide.gateway;
-  const sv = parseServerSide(props.device);
+  form.dns = ipSide.dns;
+  const sv = deviceServerSide(props.device);
   form.serverFlag = String(sv.serverFlag);
   form.serverUrl = sv.serverUrl;
   form.serverIp = sv.serverIp;
@@ -94,8 +86,9 @@ async function send() {
   if (!props.device) return;
   sending.value = true;
   try {
-    const ipSide = parseIpSide(props.device);
-    const svSide = parseServerSide(props.device);
+    // 未编辑侧直接用设备结构化值保持原参数（原实现单设备路径同为 rcu.* 回填）
+    const ipSide = deviceIpSide(props.device);
+    const svSide = deviceServerSide(props.device);
     const ipPart =
       props.kind === "ip"
         ? {
@@ -105,7 +98,7 @@ async function send() {
             gateway: form.gateway,
             dns: form.dns,
           }
-        : { ...ipSide, dns: "223.5.5.5" };
+        : { ipFlag: ipSide.ipFlag, ip: ipSide.ip, mask: ipSide.mask, gateway: ipSide.gateway, dns: ipSide.dns };
     const svPart =
       props.kind === "server"
         ? {

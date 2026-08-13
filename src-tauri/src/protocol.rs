@@ -205,6 +205,11 @@ fn port_text(port: u16) -> String {
     format!("{}{}", port >> 8, port & 0xFF)
 }
 
+/// 端口字段的数值还原（与 port_text 互逆：高字节×100 + 低字节，0x2B26 → 4338）
+pub fn port_value(port: u16) -> u16 {
+    (port >> 8) * 100 + (port & 0xFF)
+}
+
 fn read_ipv4(p: &[u8], off: usize) -> Ipv4Addr {
     Ipv4Addr::new(p[off], p[off + 1], p[off + 2], p[off + 3])
 }
@@ -212,7 +217,11 @@ fn read_ipv4(p: &[u8], off: usize) -> Ipv4Addr {
 fn read_ascii(p: &[u8], off: usize, len: usize) -> String {
     let end = off + len.min(p.len().saturating_sub(off));
     let slice = &p[off..end];
-    let cut = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+    // 在首个控制符处截断（0x00 填充 / 下发时写入的 0x09 结尾符），避免后续补位字节变乱码
+    let cut = slice
+        .iter()
+        .position(|&b| b < 0x20)
+        .unwrap_or(slice.len());
     String::from_utf8_lossy(&slice[..cut]).trim().to_string()
 }
 
@@ -387,6 +396,15 @@ pub struct RcuDeviceView {
     pub ip: String,
     pub server: String,
     pub run_server: String,
+    /// 以下为结构化参数（供配置对话框回填，原实现直接读 UdpModel 而非解析显示文本）
+    pub ip_flag: u8,
+    pub mask: String,
+    pub gateway: String,
+    pub dns: String,
+    pub server_flag: u8,
+    pub server_url: String,
+    pub server_ip: String,
+    pub server_port: u16,
     pub count: String,
     pub last_seen: u64,
 }

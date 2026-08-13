@@ -42,6 +42,7 @@ function makeDevice(i: number): RcuDevice {
   const floor = FLOORS[(i + 1) % FLOORS.length];
   const roomNo = `${floor.charAt(0)}${String((i % 18) + 1).padStart(2, "0")}`;
   const ip = `192.168.134.${10 + i}`;
+  const dhcp = i % 4 === 0;
   return {
     equipId: hex(16),
     roomNum: roomNo,
@@ -53,10 +54,20 @@ function makeDevice(i: number): RcuDevice {
     version: `2.${1 + (i % 3)}.${300 + i}`,
     author: pick(AUTHORS),
     baseNum: `1001/${BUILDS.indexOf(build) + 1}/${FLOORS.indexOf(floor) + 1}/${roomNo}/1`,
-    network: i % 4 === 0 ? `192.168.134.${10 + i}\n255.255.255.0\n192.168.134.1` : "动态获取",
+    network: dhcp
+      ? `【DHCP】${ip}\n【网/掩】192.168.134.1/255.255.255.0`
+      : `【静态】${ip}\n【网/掩】192.168.134.1/255.255.255.0`,
     ip,
-    server: "192.168.134.1:4668",
+    server: `【IP方式】192.168.134.1:4668\n【DNS】223.5.5.5`,
     runServer: "192.168.134.1:4668",
+    ipFlag: dhcp ? 0 : 1,
+    mask: "255.255.255.0",
+    gateway: "192.168.134.1",
+    dns: "223.5.5.5",
+    serverFlag: 1,
+    serverUrl: "",
+    serverIp: "192.168.134.1",
+    serverPort: 4668,
     count: "正常",
     lastSeen: Date.now(),
   };
