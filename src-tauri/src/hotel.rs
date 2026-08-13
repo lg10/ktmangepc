@@ -103,6 +103,17 @@ fn room_view(equip: &str, v: &Value) -> HotelRoomView {
     }
 }
 
+/// 同步 JSON 字段取值（兼容字符串/数字型）
+fn json_str(v: &Value, key: &str) -> String {
+    v.get(key)
+        .map(|x| match x {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => String::new(),
+        })
+        .unwrap_or_default()
+}
+
 impl HotelService {
     /// 启动时从本地库恢复同步缓存
     pub fn load(&self, db: &crate::db::DbService) {
@@ -290,6 +301,23 @@ impl HotelService {
             room_count: inner.rooms.len(),
             rooms: inner.rooms.iter().map(|(k, v)| room_view(k, v)).collect(),
         }
+    }
+
+    /// 按设备 ID 回填房间/楼栋/楼层/房型（对齐原 NetWorkMsg：这些字段来自酒店房间信息
+    /// 同步数据而非 UDP 回传；未命中置空，由前端显示「未匹配/未知」兜底）
+    pub async fn apply_room_info(&self, view: &mut crate::protocol::RcuDeviceView) {
+        let inner = self.inner.lock().await;
+        let Some(v) = inner.rooms.get(&view.equip_id.to_uppercase()) else {
+            view.room_num.clear();
+            view.room_type_name.clear();
+            view.build_name.clear();
+            view.floor_name.clear();
+            return;
+        };
+        view.room_num = json_str(v, "localId");
+        view.room_type_name = json_str(v, "roomTypeName");
+        view.build_name = json_str(v, "buildName");
+        view.floor_name = json_str(v, "floorName");
     }
 
     /// 批量下发房间基础信息（原 ChooseRoomFunction.SaveButton_Click1）

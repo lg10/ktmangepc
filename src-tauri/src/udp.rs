@@ -63,10 +63,12 @@ impl DeviceEntry {
         let m = &self.model;
         RcuDeviceView {
             equip_id: m.equip_id.clone(),
-            room_num: m.room_num.to_string(),
-            room_type_name: m.door_model.to_string(),
-            build_name: m.build_num.to_string(),
-            floor_name: m.floor_num.to_string(),
+            // 房间/房型/楼栋/楼层来自酒店同步数据（apply_room_info 按设备 ID 回填），
+            // 不取 UDP 回传值；此处先置空
+            room_num: String::new(),
+            room_type_name: String::new(),
+            build_name: String::new(),
+            floor_name: String::new(),
             rcu_mac: m.rcu_mac.clone(),
             equipment_model: protocol::model_name(m.equipment_model),
             version: protocol::version_text(m.protocol_version, m.hard_version, m.soft_version),
@@ -99,6 +101,13 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// 按设备 ID 从酒店同步数据回填房间/楼栋/楼层/房型（对齐原 NetWorkMsg：
+/// 这些字段不取 UDP 回传；未命中置空由前端显示「未匹配/未知」）
+async fn apply_room_info(app: &AppHandle, view: &mut RcuDeviceView) {
+    let state = app.state::<crate::state::AppState>();
+    state.hotel.apply_room_info(view).await;
 }
 
 #[derive(Default)]
@@ -443,6 +452,8 @@ async fn handle_packet(
                 entry.offline_count = 0;
                 entry.view()
             };
+            let mut view = view;
+            apply_room_info(app, &mut view).await;
             let _ = app.emit(events::DEVICE, view);
         }
         protocol::reg::UDP_READ_BASE_INFO => {
@@ -584,7 +595,8 @@ async fn heart_loop(svc: Arc<UdpService>, app: AppHandle, cancel: CancellationTo
                         true
                     });
                 }
-                for view in updated {
+                for mut view in updated {
+                    apply_room_info(&app, &mut view).await;
                     let _ = app.emit(events::DEVICE, view);
                 }
                 for id in removed {
@@ -627,7 +639,11 @@ pub async fn get_server_status(
 pub async fn list_devices(
     state: State<'_, crate::state::AppState>,
 ) -> Result<Vec<RcuDeviceView>, String> {
-    Ok(state.udp.list_devices().await)
+    let mut list = state.udp.list_devices().await;
+    for view in &mut list {
+        state.hotel.apply_room_info(view).await;
+    }
+    Ok(list)
 }
 
 #[tauri::command]
