@@ -1,117 +1,106 @@
-//! 提权支持：检测当前进程权限 + 一键提权重启（macOS/Windows/Linux）
+//! 提权支持：以特权身份拉起指定命令（macOS/Windows/Linux）
 //!
 //! DHCP 服务需要绑定 67 特权端口并给网卡配置 192.168.134.1，必须以 root/管理员运行。
-//! 三个系统都不支持已运行进程自身提权，只能提权新起进程：
+//! macOS 上 WKWebView 无法在 root 进程运行，因此不能提权重启整个 GUI，
+//! 而是只提权拉起本程序的 --dhcp-relay 助手进程（特权部分与 GUI 分离）：
 //! - macOS：osascript with administrator privileges（系统密码弹窗）
 //! - Windows：PowerShell Start-Process -Verb RunAs（UAC 弹窗）
 //! - Linux：pkexec（polkit 图形弹窗），无 pkexec 时退回 sudo
-//! 提权重启通过环境变量传递原始 HOME，保证应用数据目录不漂移
 
-use std::path::{Path, PathBuf};
-use tauri::AppHandle;
-
-/// 当前进程是否以 root/管理员权限运行
-#[cfg(unix)]
-pub fn process_is_elevated() -> bool {
-    unsafe { libc::geteuid() == 0 }
+/// shell 单引号转义
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-#[cfg(windows)]
-pub fn process_is_elevated() -> bool {
-    // 非管理员令牌下 net session 访问 SAM 服务必然失败，是通用的提权探测手段
-    std::process::Command::new("cmd")
-        .args(["/C", "net session >nul 2>&1"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+/// AppleScript 字符串字面量转义（双引号包裹）
+fn applescript_quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-#[tauri::command]
-pub async fn is_elevated() -> Result<bool, String> {
-    Ok(process_is_elevated())
-}
-
-/// 定位 macOS .app 包路径；dev 模式（裸二进制）返回 None
-fn macos_bundle_path(exe: &Path) -> Option<PathBuf> {
-    let macos_dir = exe.parent()?;
-    if macos_dir.file_name()?.to_str()? != "MacOS" {
-        return None;
-    }
-    let contents = macos_dir.parent()?;
-    if contents.file_name()?.to_str()? != "Contents" {
-        return None;
-    }
-    contents.parent().map(|p| p.to_path_buf())
-}
-
-/// 一键提权重启：以特权身份拉起新实例后退出当前实例
-#[tauri::command]
-pub async fn restart_elevated(app: AppHandle) -> Result<(), String> {
-    if process_is_elevated() {
-        return Ok(());
-    }
-    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {e}"))?;
-    let home = std::env::var("HOME").unwrap_or_default();
-
+/// 以特权身份拉起命令（非阻塞，密码弹窗由各平台机制呈现），返回拉起的子进程句柄
+pub fn spawn_elevated(
+    program: &str,
+    args: &[String],
+) -> Result<Option<std::process::Child>, String> {
     #[cfg(target_os = "macos")]
     {
-        // open 启动的 App 环境来自 launchd 拿不到 HOME，故按 bundle 有无分别处理：
-        // bundle 内用 open --env 注入 HOME；dev 裸二进制直接后台运行并显式传 HOME
-        let script = if let Some(bundle) = macos_bundle_path(&exe) {
-            format!(
-                r#"open --env "HOME={home}" -n "{b}""#,
-                b = bundle.display()
-            )
-        } else {
-            format!(r#""{e}" >/dev/null 2>&1 &"#, e = exe.display())
-        };
-        std::process::Command::new("osascript")
+        let mut cmd = shell_quote(program);
+        for a in args {
+            cmd.push(' ');
+            cmd.push_str(&shell_quote(a));
+        }
+        return std::process::Command::new("osascript")
             .arg("-e")
             .arg(format!(
-                r#"do shell script "{s}" with administrator privileges"#,
-                s = script.replace('\\', "\\\\").replace('"', "\\\"")
+                "do shell script {q} with administrator privileges",
+                q = applescript_quote(&cmd)
             ))
             .spawn()
-            .map_err(|e| format!("拉起提权进程失败: {e}"))?;
+            .map(Some)
+            .map_err(|e| format!("拉起提权进程失败: {e}"));
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = home;
-        std::process::Command::new("powershell")
+        let arg_list: Vec<String> = args.iter().map(|a| format!("'{}'", a.replace('\'', "''"))).collect();
+        return std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
                 &format!(
-                    "Start-Process -FilePath '{}' -Verb RunAs",
-                    exe.display()
+                    "Start-Process -FilePath '{}' -ArgumentList {} -Verb RunAs -WindowStyle Hidden",
+                    program.replace('\'', "''"),
+                    arg_list.join(",")
                 ),
             ])
             .spawn()
-            .map_err(|e| format!("拉起提权进程失败: {e}"))?;
+            .map(Some)
+            .map_err(|e| format!("拉起提权进程失败: {e}"));
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // env 转一层保留 HOME 与图形环境，pkexec 缺失时退回 sudo（终端场景）
+        // env 转一层保留图形环境；pkexec 缺失时退回 sudo（终端场景）
         let keep = ["DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"];
-        let mut args: Vec<String> = vec!["env".into(), format!("HOME={home}")];
+        let mut full: Vec<String> = vec!["env".into()];
         for k in keep {
             if let Ok(v) = std::env::var(k) {
-                args.push(format!("{k}={v}"));
+                full.push(format!("{k}={v}"));
             }
         }
-        args.push(exe.display().to_string());
-        let runner = if Path::new("/usr/bin/pkexec").exists() {
+        full.push(program.to_string());
+        full.extend(args.iter().cloned());
+        let runner = if std::path::Path::new("/usr/bin/pkexec").exists() {
             "/usr/bin/pkexec"
         } else {
             "/usr/bin/sudo"
         };
-        std::process::Command::new(runner)
-            .args(&args)
+        return std::process::Command::new(runner)
+            .args(&full)
             .spawn()
-            .map_err(|e| format!("拉起提权进程失败: {e}"))?;
+            .map(Some)
+            .map_err(|e| format!("拉起提权进程失败: {e}"));
     }
+    #[allow(unreachable_code)]
+    {
+        let _ = (program, args);
+        Err("当前平台不支持提权".into())
+    }
+}
 
-    // 让新实例接管，退出当前（无特权）实例
-    app.exit(0);
-    Ok(())
+/// 当前进程是否具备管理员/root 权限。
+/// 不能用「能否绑定 67 端口」判断：新版 macOS 与 Windows 均不限制特权端口，
+/// 真正需要特权的操作是配置网卡 IP。
+pub fn is_elevated() -> bool {
+    #[cfg(unix)]
+    {
+        return unsafe { libc::geteuid() == 0 };
+    }
+    #[cfg(windows)]
+    {
+        // net session 仅管理员身份可成功执行
+        return std::process::Command::new("net")
+            .arg("session")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    }
 }

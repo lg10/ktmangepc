@@ -45,13 +45,9 @@ function setDhcpAuto(v: boolean) {
 }
 let unlisten: UnlistenFn | null = null;
 
-/** 当前进程是否已提权（DHCP 需绑定 67 特权端口与配置网卡 IP） */
-const elevated = ref(false);
-/** 确认弹窗：提权重启 / 真实网络风险 */
-const confirmElevate = ref(false);
+/** 确认弹窗：真实网络风险（手动启动 DHCP 时检测到非离线环境） */
 const confirmRealNetwork = ref(false);
 const realNetworkMsg = ref("");
-const RESUME_KEY = "kt.dhcpResume";
 
 onMounted(async () => {
   try {
@@ -60,18 +56,6 @@ onMounted(async () => {
     appVersion.value = "3.0.1";
   }
   await refresh();
-  try {
-    elevated.value = await api.isElevated();
-  } catch {
-    elevated.value = false;
-  }
-  // 提权重启后自动续启 DHCP（上次开关被提权流程打断）
-  if (localStorage.getItem(RESUME_KEY) === "1") {
-    localStorage.removeItem(RESUME_KEY);
-    if (elevated.value) {
-      await doStartDhcp(false);
-    }
-  }
   unlisten = await listen<DhcpLease>(EVENTS.DHCP_LEASE, (e) => {
     leases.value.push(e.payload);
     if (leases.value.length > 100) leases.value.shift();
@@ -109,12 +93,8 @@ async function toggleDhcp(v: boolean) {
   }
 }
 
-/** 启动 DHCP：未提权先引导一键提权重启；手动模式检测到真实网络时弹风险确认 */
+/** 启动 DHCP：未提权时后端会弹系统密码框拉起特权助手中继，无需重启应用 */
 async function doStartDhcp(force: boolean) {
-  if (!elevated.value) {
-    confirmElevate.value = true;
-    return;
-  }
   const nic = deviceStore.interfaces.find(
     (i) => i.ip === deviceStore.selectedIp
   );
@@ -130,21 +110,6 @@ async function doStartDhcp(force: boolean) {
       return;
     }
     throw e;
-  }
-}
-
-/** 一键提权重启：记住续启意图，重启后自动拉起 DHCP */
-async function doRestartElevated() {
-  try {
-    localStorage.setItem(RESUME_KEY, "1");
-    await api.restartElevated();
-  } catch (e) {
-    localStorage.removeItem(RESUME_KEY);
-    toast({
-      title: "提权重启失败",
-      description: String(e),
-      variant: "destructive",
-    });
   }
 }
 
@@ -277,15 +242,6 @@ async function installUpdate() {
         </div>
       </div>
 
-      <div v-if="!elevated" class="mt-4 flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-        <div class="text-[11px] text-muted-foreground leading-relaxed pr-3">
-          DHCP 需管理员/root 权限（绑定 67 端口与自动配置网卡 IP），当前为普通权限运行
-        </div>
-        <Button variant="outline" size="sm" class="shrink-0" @click="confirmElevate = true">
-          以管理员身份重启
-        </Button>
-      </div>
-
       <div class="mt-4 flex items-center justify-between">
         <div>
           <div class="text-xs font-medium">智能模式</div>
@@ -335,15 +291,6 @@ async function installUpdate() {
         </div>
       </div>
     </Card>
-    <!-- 提权确认 -->
-    <ConfirmDialog
-      v-model:open="confirmElevate"
-      title="需要管理员权限"
-      description="启动 DHCP 服务需要管理员/root 权限（绑定 67 端口并自动配置网卡 IP）。应用将以管理员身份重新启动，重启后自动继续开启 DHCP。"
-      confirm-text="以管理员身份重启"
-      @confirm="doRestartElevated"
-    />
-
     <!-- 真实网络风险确认 -->
     <ConfirmDialog
       v-model:open="confirmRealNetwork"
