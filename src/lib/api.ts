@@ -95,11 +95,15 @@ export const api = {
   /** 门锁 */
   listLockPackets: () => invoke<LockPacket[]>("list_lock_packets"),
 
-  /** DHCP */
-  startDhcp: (interfaceName: string, autoMode: boolean) =>
-    invoke<void>("start_dhcp", { interfaceName, autoMode }),
+  /** DHCP（手动启动检测到真实网络时返回 REAL_NETWORK: 前缀错误，确认后 force 重试） */
+  startDhcp: (interfaceName: string, autoMode: boolean, force = false) =>
+    invoke<void>("start_dhcp", { interfaceName, autoMode, force }),
   stopDhcp: () => invoke<void>("stop_dhcp"),
   dhcpStatus: () => invoke<DhcpStatus>("get_dhcp_status"),
+
+  /** 提权：检测当前进程权限 / 一键提权重启（macOS/Windows/Linux） */
+  isElevated: () => invoke<boolean>("is_elevated"),
+  restartElevated: () => invoke<void>("restart_elevated"),
 
   /** 文件库（云端拉取） */
   fetchFile: (kind: FileKind, url: string) =>

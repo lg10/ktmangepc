@@ -4,6 +4,7 @@ pub mod auth;
 pub mod commands;
 pub mod db;
 pub mod dhcp;
+pub mod elevate;
 pub mod events;
 pub mod filestore;
 pub mod hotel;
@@ -94,6 +95,9 @@ pub fn run() {
             dhcp::start_dhcp,
             dhcp::stop_dhcp,
             dhcp::get_dhcp_status,
+            // 提权
+            elevate::is_elevated,
+            elevate::restart_elevated,
             // 文件库
             filestore::fetch_file,
             filestore::list_files,

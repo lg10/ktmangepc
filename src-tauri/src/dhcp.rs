@@ -2,7 +2,9 @@
 //!
 //! 对应原 MainWindow.axaml.cs 中的 DhcpDotNet 实现：
 //! - 绑定 67 端口（需要管理员/root 权限），响应 DISCOVER/REQUEST，分配 192.168.134.100~200
-//! - 智能开关：auto 模式下检测真实网络环境（排除本机 192.168.134.x 接口），有外网/内网则拒绝启动
+//! - 智能开关：无论自动/手动模式启动都检测真实网络环境（排除本机 192.168.134.x 接口）；
+//!   auto 模式直接拒绝，手动模式返回 REAL_NETWORK: 前缀错误由前端确认后 force 重试
+//! - 启动时自动给所选网卡配置 192.168.134.1（需 root/管理员），停止时移除还原
 //! - 事件：dhcp://status、dhcp://lease
 
 use crate::events;
@@ -22,6 +24,9 @@ const DHCP_CLIENT_PORT: u16 = 68;
 const SUBNET: [u8; 3] = [192, 168, 134];
 const LEASE_START: u8 = 100;
 const LEASE_END: u8 = 200;
+
+/// 手动启动时检测到真实网络的错误前缀，前端据此弹风险确认框后带 force 重试
+pub const REAL_NETWORK_MARK: &str = "REAL_NETWORK:";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,6 +52,8 @@ struct DhcpInner {
     auto_mode: bool,
     leases: HashMap<String, DhcpLeaseView>,
     cancel: Option<CancellationToken>,
+    /// 启动时由程序自动添加的 192.168.134.1 网卡地址（停止时移除还原）
+    nic_ip_added: Option<String>,
 }
 
 impl Default for DhcpInner {
@@ -57,6 +64,7 @@ impl Default for DhcpInner {
             auto_mode: false,
             leases: HashMap::new(),
             cancel: None,
+            nic_ip_added: None,
         }
     }
 }
@@ -173,19 +181,155 @@ fn build_reply(xid: [u8; 4], mac: [u8; 6], offer_ip: Ipv4Addr, msg_type: u8) -> 
 pub static SUBNET_IP: std::sync::LazyLock<Ipv4Addr> =
     std::sync::LazyLock::new(|| Ipv4Addr::new(SUBNET[0], SUBNET[1], SUBNET[2], 1));
 
+/// 确定目标网卡：传入名为准；未传入时仅当只有唯一非回环 IPv4 接口时自动选中
+fn resolve_interface(requested: &str) -> Result<String, String> {
+    let list = local_ip_address::list_afinet_netifas()
+        .map_err(|e| format!("枚举网卡失败: {e}"))?;
+    let v4: Vec<(String, Ipv4Addr)> = list
+        .into_iter()
+        .filter_map(|(n, ip)| match ip {
+            std::net::IpAddr::V4(v4) if !v4.is_loopback() => Some((n, v4)),
+            _ => None,
+        })
+        .collect();
+    if !requested.is_empty() {
+        if v4.iter().any(|(n, _)| n == requested) {
+            return Ok(requested.to_string());
+        }
+        return Err(format!("未找到名为 {requested} 的 IPv4 网卡"));
+    }
+    let mut uniq: Vec<&(String, Ipv4Addr)> = Vec::new();
+    for e in &v4 {
+        if !uniq.iter().any(|u| u.0 == e.0) {
+            uniq.push(e);
+        }
+    }
+    if uniq.len() == 1 {
+        return Ok(uniq[0].0.clone());
+    }
+    Err("请先在顶部网卡选择中选中直连设备的那块网卡".into())
+}
+
+/// 确保目标网卡持有 192.168.134.x 地址（设备回包目标）；无则自动添加。
+/// 返回是否由本次调用新增（新增的在停止时移除还原）。需要 root/管理员权限，失败返回提示文案
+fn ensure_subnet_ip(requested: &str) -> Result<bool, String> {
+    let name = resolve_interface(requested)?;
+    let has = local_ip_address::list_afinet_netifas()
+        .map(|l| {
+            l.iter().any(|(n, ip)| {
+                n == &name
+                    && matches!(ip,
+                        std::net::IpAddr::V4(v)
+                        if v.octets()[..3] == SUBNET)
+            })
+        })
+        .unwrap_or(false);
+    if has {
+        return Ok(false);
+    }
+    let ip = SUBNET_IP.to_string();
+    match run_ip_cmd(&name, true) {
+        Some(out) if out.status.success() => Ok(true),
+        Some(out) => Err(format!(
+            "自动为网卡 {name} 配置 {ip} 失败（需要管理员/root 权限）：{}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )),
+        None => Err(format!("自动为网卡 {name} 配置 {ip} 失败：无法执行系统命令")),
+    }
+}
+
+/// 移除启动时自动添加的 192.168.134.1（停止服务时还原现场），失败忽略
+fn remove_subnet_ip(name: &str) {
+    let _ = run_ip_cmd(name, false);
+}
+
+/// 平台特定的网卡副地址增删：macOS ifconfig alias、Linux ip addr、Windows netsh
+fn run_ip_cmd(name: &str, add: bool) -> Option<std::process::Output> {
+    let ip = SUBNET_IP.to_string();
+    #[cfg(target_os = "macos")]
+    let (prog, args): (&str, Vec<String>) = if add {
+        (
+            "ifconfig",
+            vec![
+                name.into(),
+                "alias".into(),
+                ip,
+                "netmask".into(),
+                "255.255.255.0".into(),
+            ],
+        )
+    } else {
+        ("ifconfig", vec![name.into(), "-alias".into(), ip])
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let (prog, args): (&str, Vec<String>) = if add {
+        ("ip", vec!["addr".into(), "add".into(), format!("{ip}/24"), "dev".into(), name.into()])
+    } else {
+        ("ip", vec!["addr".into(), "del".into(), format!("{ip}/24"), "dev".into(), name.into()])
+    };
+    #[cfg(windows)]
+    let (prog, args): (&str, Vec<String>) = if add {
+        (
+            "netsh",
+            vec![
+                "interface".into(),
+                "ip".into(),
+                "add".into(),
+                "address".into(),
+                name.into(),
+                ip,
+                "255.255.255.0".into(),
+            ],
+        )
+    } else {
+        (
+            "netsh",
+            vec![
+                "interface".into(),
+                "ip".into(),
+                "delete".into(),
+                "address".into(),
+                name.into(),
+                ip,
+            ],
+        )
+    };
+    std::process::Command::new(prog).args(&args).output().ok()
+}
+
 impl DhcpService {
     pub async fn start(
         &self,
         app: AppHandle,
         interface_name: String,
         auto_mode: bool,
+        force: bool,
     ) -> Result<(), String> {
-        // 智能开关：自动模式下检测到真实网络则拒绝
-        if auto_mode && has_real_network().await {
-            return Err("检测到真实网络环境，自动 DHCP 已跳过（仅网线直连离线场景需要）".into());
+        // 真实网络检测：auto 模式直接拒绝；手动模式给出可确认重试的标记错误（防 rogue DHCP）
+        if has_real_network().await {
+            if auto_mode {
+                return Err("检测到真实网络环境，自动 DHCP 已跳过（仅网线直连离线场景需要）".into());
+            }
+            if !force {
+                return Err(format!(
+                    "{REAL_NETWORK_MARK}检测到真实网络环境，此时启动 DHCP 可能导致同网段其他设备被分配 192.168.134.x 地址而断网，请确认仅在网线直连离线场景使用"
+                ));
+            }
         }
 
         self.stop_inner(&app).await;
+
+        // 为所选网卡自动配置 192.168.134.1（设备回包目标），失败不阻断但给出警告
+        let nic_warning = match ensure_subnet_ip(&interface_name) {
+            Ok(added) => {
+                if added {
+                    let mut inner = self.inner.lock().await;
+                    inner.nic_ip_added = Some(interface_name.clone());
+                }
+                String::new()
+            }
+            Err(e) => e,
+        };
 
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))
             .map_err(|e| format!("创建套接字失败: {e}"))?;
@@ -196,7 +340,7 @@ impl DhcpService {
         let bind_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, DHCP_SERVER_PORT));
         sock.bind(&bind_addr.into()).map_err(|e| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
-                "绑定 67 端口需要管理员/root 权限，请以特权身份运行或手动开启".to_string()
+                "绑定 67 端口需要管理员/root 权限，请在设置页使用『以管理员身份重启』".to_string()
             } else {
                 format!("绑定 67 端口失败: {e}")
             }
@@ -218,6 +362,9 @@ impl DhcpService {
 
         let svc = app.state::<crate::state::AppState>().dhcp.clone();
         tokio::spawn(serve_loop(svc, app, socket, cancel));
+        if !nic_warning.is_empty() {
+            return Err(nic_warning);
+        }
         Ok(())
     }
 
@@ -227,6 +374,10 @@ impl DhcpService {
 
     async fn stop_inner(&self, app: &AppHandle) {
         let mut inner = self.inner.lock().await;
+        // 移除启动时自动添加的网卡地址（还原现场）
+        if let Some(nic) = inner.nic_ip_added.take() {
+            remove_subnet_ip(&nic);
+        }
         if !inner.running {
             return;
         }
@@ -319,8 +470,12 @@ pub async fn start_dhcp(
     state: State<'_, crate::state::AppState>,
     interface_name: String,
     auto_mode: bool,
+    force: bool,
 ) -> Result<(), String> {
-    state.dhcp.start(app, interface_name, auto_mode).await
+    state
+        .dhcp
+        .start(app, interface_name, auto_mode, force)
+        .await
 }
 
 #[tauri::command]
