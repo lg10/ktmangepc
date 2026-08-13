@@ -11,8 +11,8 @@
  *   2. 本地 tauri build 不产出 latest.json → 从 *.sig 更新包签名自行合成
  *
  * 产出 dist-cdn/（整个目录内容上传到 CDN 根路径即可）：
- *   latest.json   （自动更新清单：仅含签名更新包）
- *   install.json  （完整安装包清单：首装下载用，含 dmg/exe/AppImage/deb 地址）
+ *   latest.json   （platforms：签名更新包，供自动更新；install：与 platforms 同级同构，
+ *                   指向完整安装包 dmg/exe/AppImage/deb，供首装下载）
  *   mac/       kt-mange-pc-<arch>.app.tar.gz（更新包） / kt-mange-pc-<arch>.dmg（首装）
  *   windows/   kt-mange-pc-<arch>.nsis.zip（更新包） / kt-mange-pc-<arch>-setup.exe（首装）
  *   linux/     kt-mange-pc-<arch>.AppImage.tar.gz（更新包） / .AppImage / .deb（首装）
@@ -129,8 +129,8 @@ function firstGlob(dir, pred) {
   return hit.length ? path.join(dir, hit[0]) : null;
 }
 
-// install.json：完整安装包清单（与 latest.json 分离，latest.json 仅服务自动更新）
-const install = { version: merged.version, pub_date: merged.pub_date, platforms: {} };
+// install：与 platforms 同级的完整安装包清单（结构一致，url 指向首装包；无 signature）
+merged.install = {};
 
 for (const [key, plat] of Object.entries(merged.platforms)) {
   const dir = DIR_OF(key);
@@ -148,35 +148,34 @@ for (const [key, plat] of Object.entries(merged.platforms)) {
   // 更新包：按旧文件名定位后重命名拷贝
   copyIfExist(path.join(bundleRoot, SUBDIR_OF(dir), oldName), path.join(outDir, dir, newName));
 
-  // 首装包：拷贝并记入 install.json（按实际拷贝成功的文件记录，避免清单指向不存在的产物）
+  // 首装包：拷贝并记入 latest.json 的 install 字段（按实际拷贝成功的文件记录，优先取安装包）
   const inst = [];
   if (dir === "mac") {
     const dmg = `kt-mange-pc-${arch}.dmg`;
     if (copyIfExist(firstGlob(path.join(bundleRoot, "dmg"), (n) => n.endsWith(".dmg")), path.join(outDir, dir, dmg)))
-      inst.push({ type: "dmg", url: `${base}/${dir}/${dmg}` });
+      inst.push(`${base}/${dir}/${dmg}`);
   } else if (dir === "windows") {
     const exe = `kt-mange-pc-${arch}-setup.exe`;
     if (
       copyIfExist(firstGlob(path.join(bundleRoot, "nsis"), (n) => n.endsWith("-setup.exe")), path.join(outDir, dir, exe))
     )
-      inst.push({ type: "nsis", url: `${base}/${dir}/${exe}` });
+      inst.push(`${base}/${dir}/${exe}`);
   } else {
     const app = `kt-mange-pc-${arch}.AppImage`;
     if (copyIfExist(firstGlob(path.join(bundleRoot, "appimage"), (n) => n.endsWith(".AppImage")), path.join(outDir, dir, app)))
-      inst.push({ type: "appimage", url: `${base}/${dir}/${app}` });
+      inst.push(`${base}/${dir}/${app}`);
     const deb = `kt-mange-pc-${arch}.deb`;
     if (copyIfExist(firstGlob(path.join(bundleRoot, "deb"), (n) => n.endsWith(".deb")), path.join(outDir, dir, deb)))
-      inst.push({ type: "deb", url: `${base}/${dir}/${deb}` });
+      inst.push(`${base}/${dir}/${deb}`);
   }
-  if (inst.length) install.platforms[key] = inst;
+  // 结构与 platforms 条目一致（url + version）；Linux 多产物时优先 AppImage
+  if (inst.length) merged.install[key] = { url: inst[0], version: merged.version };
 }
 
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, "latest.json"), JSON.stringify(merged, null, 2));
-fs.writeFileSync(path.join(outDir, "install.json"), JSON.stringify(install, null, 2));
 
 console.log(`[done] ${outDir}/ 已生成，platforms: ${Object.keys(merged.platforms).join(", ")}`);
 console.log("上传映射（dist-cdn/ 内容 → CDN 根路径）：");
 for (const [k, p] of Object.entries(merged.platforms)) console.log(`  ${k}: ${p.url}`);
-for (const [k, list] of Object.entries(install.platforms))
-  for (const i of list) console.log(`  ${k} (install): ${i.url}`);
+for (const [k, i] of Object.entries(merged.install)) console.log(`  ${k} (install): ${i.url}`);
