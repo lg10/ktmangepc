@@ -411,8 +411,9 @@ fn ipv4_hex(s: &str) -> Result<String, String> {
     Ok(hex::encode_upper(ip.octets()))
 }
 
-/// 网络配置下发载荷（原 NetworkDialog）：
-/// ipFlag + ip + mask + gateway + FFFFFFFFFFFF + serverFlag + url(32) + serverIp + port[2] + dns
+/// 网络配置下发载荷（原 NetworkDialog，逐字段对齐）：
+/// ipFlag + ip + mask + gateway + FFFFFFFFFFFF + serverFlag + url+09补齐32 + serverIp
+/// + port[2]（每字节十进制：高字节=port/100、低字节=port%100，与端口显示映射互逆） + dns
 pub fn build_network_payload(cfg: &NetworkConfigDto) -> Result<String, String> {
     let mut s = String::with_capacity(128);
     s.push_str(&format!("{:02X}", cfg.ip_flag));
@@ -421,16 +422,24 @@ pub fn build_network_payload(cfg: &NetworkConfigDto) -> Result<String, String> {
     s.push_str(&ipv4_hex(&cfg.gateway)?);
     s.push_str("FFFFFFFFFFFF"); // MAC 保持不变
     s.push_str(&format!("{:02X}", cfg.server_flag));
-    // URL 固定 32 字节，不足补 0
+    // 原 buildUrl(url,1)：url ASCII 后追加 0x09 结尾符，再补 0 至 32 字节
     let url_bytes = cfg.server_url.as_bytes();
-    if url_bytes.len() > 32 {
-        return Err("服务器域名超过 32 字节".into());
+    if url_bytes.len() > 31 {
+        return Err("服务器域名超过 31 字节".into());
     }
     let mut url_buf = [0u8; 32];
     url_buf[..url_bytes.len()].copy_from_slice(url_bytes);
+    url_buf[url_bytes.len()] = 0x09;
     s.push_str(&hex::encode_upper(url_buf));
     s.push_str(&ipv4_hex(&cfg.server_ip)?);
-    s.push_str(&hex::encode_upper(cfg.server_port.to_be_bytes()));
+    if cfg.server_port >= 10000 {
+        return Err("端口必须小于 10000（按每字节十进制编码）".into());
+    }
+    s.push_str(&format!(
+        "{:02X}{:02X}",
+        (cfg.server_port / 100) as u8,
+        (cfg.server_port % 100) as u8
+    ));
     s.push_str(&ipv4_hex(&cfg.dns)?);
     Ok(s)
 }
@@ -500,7 +509,8 @@ pub fn build_start_config_payload(
     version: &str,
     update_time: u64,
 ) -> Result<String, String> {
-    let ver: u16 = version
+    // 原实现 Convert.ToInt32(version)，用 u32 保持取值范围一致
+    let ver: u32 = version
         .parse()
         .map_err(|_| format!("配置版本号非法: {version}"))?;
     Ok(format!(
@@ -586,6 +596,12 @@ pub fn build_auth_payload(
     )
 }
 
+/// 授权下发组包：原 GetSendHeader 无 SendAuth 分支，走 default → 线上寄存器为
+/// 0xFE12（基础信息）、regNum=100，此处忠实复刻该行为，勿改为 0xF102
+pub fn build_auth_packet(payload_hex: &str) -> Result<Vec<u8>, String> {
+    build_packet_dyn(reg::UDP_SEND_BASE_INFO, 100, payload_hex)
+}
+
 /// 设备回复报文中取出载荷区（跳过 12 字节 Header，按 dataLen 截断，容忍 0D0A 尾）
 pub fn payload_of<'a>(buf: &'a [u8], header: &Header) -> &'a [u8] {
     let start = HEADER_LEN;
@@ -663,6 +679,45 @@ mod tests {
         assert_eq!(format!("{:02X}", xor_check(&src)), &q[q.len() - 6..q.len() - 4]);
         let src2 = hex::decode(format!("3039{key_body}{:02X}", xor_check(&src))).unwrap();
         assert_eq!(format!("{:04X}", crc16_a001(&src2)), &q[q.len() - 4..]);
+    }
+
+    #[test]
+    fn network_payload_layout() {
+        let cfg = NetworkConfigDto {
+            ip_flag: 0,
+            ip: "192.168.1.100".into(),
+            mask: "255.255.255.0".into(),
+            gateway: "192.168.1.1".into(),
+            dns: "8.8.8.8".into(),
+            server_flag: 1,
+            server_url: "".into(),
+            server_ip: "192.168.0.61".into(),
+            server_port: 4338,
+        };
+        let p = build_network_payload(&cfg).unwrap();
+        // ipFlag + 3 IP + MAC + serverFlag + url(32) + ip + port + dns = 1+12+6+1+32+4+2+4 = 62B
+        assert_eq!(p.len(), 124);
+        // url 区自 hex 索引 40 起：空域名 → 首字节为 09 结尾符，其余补 0
+        assert_eq!(&p[40..42], "09");
+        assert_eq!(&p[42..44], "00");
+        // 端口 4338 → 每字节十进制 43/38 = 0x2B26（与显示映射 port_text 互逆）
+        assert_eq!(&p[112..116], "2B26");
+    }
+
+    #[test]
+    fn auth_packet_wire_register() {
+        // 原 default 分支：线上寄存器 0xFE12、regNum=100（并非逻辑地址 0xF102）
+        let p = build_auth_payload(
+            (0x07E8, 2, 0x17, 0x0D, 9, 0x27),
+            false,
+            (0x07E8, 5, 0x17, 0x0D, 9, 0x27),
+            0x7B,
+        );
+        let pkt = build_auth_packet(&p).unwrap();
+        let h = Header::parse(&pkt).unwrap();
+        assert_eq!(h.reg_addr, reg::UDP_SEND_BASE_INFO);
+        assert_eq!(h.reg_num, 100);
+        assert_eq!(pkt.len(), 12 + 100 + 2);
     }
 
     #[test]

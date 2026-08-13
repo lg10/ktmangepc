@@ -407,7 +407,8 @@ impl HotelService {
 }
 
 async fn build_and_send(state: &AppState, equip_id: &str, payload: &str) -> Result<(), String> {
-    let packet = protocol::build_packet(protocol::reg::SEND_AUTH, payload)?;
+    // 原实现 SendAuth 走 GetSendHeader default 分支：线上寄存器 0xFE12、regNum=100
+    let packet = protocol::build_auth_packet(payload)?;
     state.udp.send_raw(equip_id, packet).await
 }
 

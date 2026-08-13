@@ -204,7 +204,7 @@ async function send() {
               </div>
               <div class="space-y-1.5">
                 <Label>{{ t("network.serverPort") }}</Label>
-                <Input v-model="form.serverPort" type="number" />
+                <Input v-model="form.serverPort" type="number" min="0" max="9999" />
               </div>
             </div>
           </template>
