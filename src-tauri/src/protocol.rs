@@ -449,7 +449,9 @@ pub fn build_network_payload(cfg: &NetworkConfigDto) -> Result<String, String> {
     url_buf[..url_bytes.len()].copy_from_slice(url_bytes);
     url_buf[url_bytes.len()] = 0x09;
     s.push_str(&hex::encode_upper(url_buf));
-    s.push_str(&ipv4_hex(&cfg.server_ip)?);
+    // 域名方式下前端可能不传 serverIp，空值回落 0.0.0.0（原单设备路径恒带 rcu.ip）
+    let sip = if cfg.server_ip.trim().is_empty() { "0.0.0.0" } else { &cfg.server_ip };
+    s.push_str(&ipv4_hex(sip)?);
     if cfg.server_port >= 10000 {
         return Err("端口必须小于 10000（按每字节十进制编码）".into());
     }

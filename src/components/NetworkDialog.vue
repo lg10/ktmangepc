@@ -63,7 +63,8 @@ function deviceServerSide(d: RcuDevice) {
   return {
     serverFlag: d.serverFlag,
     serverUrl: d.serverFlag === 1 ? "" : d.serverUrl,
-    serverIp: d.serverFlag === 1 ? d.serverIp : "",
+    // 原单设备路径 serverIp 恒随报文附带（rcu.ip），与当前模式无关，故始终保留设备值
+    serverIp: d.serverIp,
     serverPort: d.serverPort,
   };
 }
@@ -78,7 +79,7 @@ watch(open, (v) => {
   form.dns = ipSide.dns;
   const sv = deviceServerSide(props.device);
   form.serverFlag = String(sv.serverFlag);
-  form.serverUrl = sv.serverUrl;
+  form.serverUrl = sv.serverUrl || "hotel.kingint.com";
   form.serverIp = sv.serverIp;
   form.serverPort = String(sv.serverPort || 9527);
 });
@@ -187,9 +188,15 @@ async function send() {
           </div>
 
           <template v-if="form.serverFlag === '0'">
-            <div class="space-y-1.5">
-              <Label>{{ t("network.serverUrl") }}</Label>
-              <Input v-model="form.serverUrl" placeholder="server.kingint.com" />
+            <div class="grid grid-cols-2 gap-3">
+              <div class="space-y-1.5">
+                <Label>{{ t("network.serverUrl") }}</Label>
+                <Input v-model="form.serverUrl" placeholder="hotel.kingint.com" />
+              </div>
+              <div class="space-y-1.5">
+                <Label>{{ t("network.serverPort") }}</Label>
+                <Input v-model="form.serverPort" type="number" min="0" max="9999" />
+              </div>
             </div>
           </template>
           <template v-else>
