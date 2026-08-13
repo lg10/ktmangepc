@@ -465,8 +465,9 @@ pub fn build_revert_payload(cmd: u8) -> String {
 }
 
 /// 固件升级首指令载荷（原 UpdateFileDialog.StartButton，0x02F2）：
-/// "0000" + hotelFlag(X2) + v0(X2) + v2(X4) + v1(X2) + updateTime(X8) + fileId(X4) + total(X8) + num(X4) + md5
-/// 注：原实现将 v0 裸拼接，单数字版本会产生奇数长度 hex 导致字节错位，此处修正为 X2
+/// "0000" + hotelFlag(X2) + v0(HEX 原样) + v2(X4) + v1(X2) + updateTime(X8) + fileId(X4) + total(X8) + num(X4) + md5
+/// 注：原实现将 v0 按 HEX 原样拼接（如 "1001"），非十进制；奇数长度时原实现会
+/// 整体错位，此处左侧补 0 保证偶数长度
 pub fn build_start_update_payload(
     hotel_id: u32,
     version: &str,
@@ -480,13 +481,22 @@ pub fn build_start_update_payload(
     if parts.len() < 3 {
         return Err(format!("固件版本号格式非法（需 x.y.z）: {version}"));
     }
-    let v0: u8 = u8::from_str_radix(parts[0], 10).map_err(|_| format!("版本号主段非法: {version}"))?;
+    // v0 为 HEX 原样段（原 Append(versions[0])），限 4 位以内防载荷越界
+    let v0 = parts[0].trim();
+    if v0.is_empty() || v0.len() > 4 || !v0.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("版本号主段非法（需 1-4 位 HEX）: {version}"));
+    }
+    let v0 = if v0.len() % 2 == 1 {
+        format!("0{v0}")
+    } else {
+        v0.to_ascii_uppercase()
+    };
     let v1: u8 = u8::from_str_radix(parts[1], 10).map_err(|_| format!("版本号次段非法: {version}"))?;
     let v2: u16 = parts[2]
         .parse()
         .map_err(|_| format!("版本号修订段非法: {version}"))?;
     Ok(format!(
-        "0000{:02X}{:02X}{:04X}{:02X}{:08X}{:04X}{:08X}{:04X}{}",
+        "0000{:02X}{}{:04X}{:02X}{:08X}{:04X}{:08X}{:04X}{}",
         if hotel_id == 0 { 0u8 } else { 1u8 },
         v0,
         v2,
@@ -723,16 +733,23 @@ mod tests {
     #[test]
     fn start_update_payload_len() {
         let md5 = "a".repeat(32);
-        let p = build_start_update_payload(1395, "2.3.10", 0x66B0F000, 0x00AB, 123456, 121, &md5).unwrap();
-        // 2+1+1+2+1+4+2+4+2+16 = 35 字节 = 70 hex
+        // v0 为 2 位 HEX：2+1+1+2+1+4+2+4+2+16 = 35 字节 = 70 hex
+        let p = build_start_update_payload(1395, "03.10.179", 0x66B0F000, 0x00AB, 123456, 121, &md5).unwrap();
         assert_eq!(p.len(), 70);
+        // v0 为 4 位 HEX（如 1001.50.179，原实现 HEX 原样拼接，占 2 字节）：36 字节 = 72 hex
+        let q = build_start_update_payload(1395, "1001.50.179", 0x66B0F000, 0x00AB, 123456, 121, &md5).unwrap();
+        assert_eq!(q.len(), 72);
+        assert_eq!(&q[6..10], "1001");
+        // 奇数长度 HEX 左侧补 0（原实现会错位，此处安全化）
+        let r = build_start_update_payload(0, "2.3.10", 0, 1, 100, 1, &md5).unwrap();
+        assert_eq!(&r[6..8], "02");
     }
 
     #[test]
     fn start_update_packet_byte37() {
         // 0x02F2 报文：数据区正数第 37 字节（从 1 数）必须为 1
         let md5 = "a".repeat(32);
-        let p = build_start_update_payload(1, "1.0.0", 0, 1, 100, 1, &md5).unwrap();
+        let p = build_start_update_payload(1, "01.0.0", 0, 1, 100, 1, &md5).unwrap();
         let pkt = build_start_update_packet(&p).unwrap();
         assert_eq!(pkt[HEADER_LEN + 36], 1);
         // 其余补位字节不受影响
