@@ -9,20 +9,16 @@ import { setSizeLogin, isMac } from "@/lib/window";
 import { splashFinish } from "@/lib/splash";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { Loader2 } from "lucide-vue-next";
+import WinControls from "@/components/layout/WinControls.vue";
 
 const { t } = useI18n();
 const { toast } = useToast();
 const win = getCurrentWindow();
 
-/** 微信式简洁顶栏：仅红绿灯 + 空白拖拽区 */
-function onDrag() {
+/** 微信式简洁顶栏：仅拖拽区 + 平台窗口控件 */
+function onDrag(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest("button")) return;
   win.startDragging();
-}
-function minimize() {
-  win.minimize();
-}
-function close() {
-  win.close();
 }
 
 type Phase = "loading" | "ready" | "wait" | "refuse" | "error" | "success";
@@ -101,19 +97,10 @@ onUnmounted(async () => {
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-background">
-    <!-- 顶栏：无面包屑，仅红绿灯与拖拽区（macOS 用原生红绿灯） -->
-    <header class="h-10 shrink-0 flex items-center pl-3 select-none" @mousedown="onDrag">
-      <div v-if="!isMac" class="flex items-center gap-2 group" @mousedown.stop>
-        <button class="traffic-light bg-[#ff5f57] hover:brightness-90" title="关闭" @click="close">
-          <svg viewBox="0 0 12 12" class="h-2 w-2 opacity-0 group-hover:opacity-100">
-            <path d="M3.5 3.5l5 5m0-5l-5 5" stroke="#7a1d17" stroke-width="1.2" stroke-linecap="round" />
-          </svg>
-        </button>
-        <button class="traffic-light bg-[#febc2e] hover:brightness-90" title="最小化" @click="minimize">
-          <svg viewBox="0 0 12 12" class="h-2 w-2 opacity-0 group-hover:opacity-100">
-            <path d="M2.5 6h7" stroke="#8a5a00" stroke-width="1.2" stroke-linecap="round" />
-          </svg>
-        </button>
+    <!-- 顶栏：macOS 原生红绿灯；Windows/Linux 右侧自绘控件 -->
+    <header class="h-10 shrink-0 flex items-center select-none" @mousedown="onDrag">
+      <div v-if="!isMac" class="ml-auto h-full" @mousedown.stop>
+        <WinControls :maximize="false" />
       </div>
     </header>
 
@@ -182,14 +169,3 @@ onUnmounted(async () => {
     </p>
   </div>
 </template>
-
-<style scoped>
-.traffic-light {
-  width: 12px;
-  height: 12px;
-  border-radius: 9999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-</style>
