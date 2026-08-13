@@ -8,6 +8,7 @@ import SideNav from "@/components/layout/SideNav.vue";
 import StatusBar from "@/components/layout/StatusBar.vue";
 import Dock from "@/components/layout/Dock.vue";
 import CommandPalette from "@/components/layout/CommandPalette.vue";
+import WelcomeGreeting from "@/components/layout/WelcomeGreeting.vue";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import FilesView from "@/views/FilesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
@@ -66,6 +67,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="h-screen w-screen flex flex-col overflow-hidden bg-background">
+    <!-- 进入工作台的欢迎语动画（登录进入/静默恢复均展示，约 2s 后自动淡出） -->
+    <WelcomeGreeting />
     <TitleBar />
 
     <div class="flex-1 flex min-h-0">
