@@ -130,7 +130,17 @@ impl FileStore {
         let uid = data.get("id").and_then(|v| v.as_i64()).ok_or("文件信息缺少 id")?;
         let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let hotel_name = data.get("hotel_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let version = data.get("version").and_then(|v| v.as_str()).ok_or("文件信息缺少版本号")?.to_string();
+        // 原版 (string)dataObject["version"] 的 Newtonsoft 强转兼容数字型；
+        // 配置文件接口可能缺省该字段，缺失/空时回落 "0"（对齐原 Convert.ToInt32(null)=0 语义）
+        let version = data
+            .get("version")
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s.trim().to_string()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "0".to_string());
         let author = data.get("author").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let custom = data.get("custom").and_then(|v| v.as_i64()).unwrap_or(0);
         let room_type_id = data.get("room_type_id").and_then(|v| v.as_i64()).unwrap_or(0);

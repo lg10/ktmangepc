@@ -34,12 +34,24 @@ export const useTelnetStore = defineStore("telnet", {
       await this.connect(tab);
     },
     async connect(tab: TelnetTab) {
+      // 必须通过 this.tabs 取回响应式代理对象再改状态：
+      // 直接改 push 前的裸对象不会触发 Vue 依赖更新（会永远卡在 connecting）
+      const t = this.tabs.find((x) => x.id === tab.id) ?? tab;
       try {
-        await api.telnetConnect(tab.id, tab.ip, tab.port);
-        tab.status = "connected";
+        await api.telnetConnect(t.id, t.ip, t.port);
+        t.status = "connected";
+        t.reason = undefined;
       } catch (e) {
-        tab.status = "closed";
-        tab.reason = String(e);
+        t.status = "closed";
+        t.reason = String(e);
+      }
+    },
+    /** 收到数据即证明会话存活（真实状态驱动，兼容 invoke 时序异常） */
+    markConnected(id: string) {
+      const tab = this.tabs.find((t) => t.id === id);
+      if (tab && tab.status !== "connected") {
+        tab.status = "connected";
+        tab.reason = undefined;
       }
     },
     markClosed(id: string, reason: string) {

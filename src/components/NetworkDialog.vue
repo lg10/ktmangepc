@@ -46,11 +46,14 @@ function defaultGateway(ip: string) {
 
 /** 设备当前 IP 侧结构化参数（与原版一致直接读 UdpModel，不解析显示文本） */
 function deviceIpSide(d: RcuDevice) {
+  // DHCP 设备上报的网关/掩码可能为 0.0.0.0，此时按 IP 推导默认值，避免输入框出现无效值
+  const gw = d.gateway && d.gateway !== "0.0.0.0" ? d.gateway : defaultGateway(d.ip);
+  const mask = d.mask && d.mask !== "0.0.0.0" ? d.mask : "255.255.255.0";
   return {
     ipFlag: d.ipFlag,
     ip: d.ip,
-    mask: d.mask || "255.255.255.0",
-    gateway: d.gateway || defaultGateway(d.ip),
+    mask,
+    gateway: gw,
     dns: d.dns || "223.5.5.5",
   };
 }

@@ -68,6 +68,10 @@ onMounted(async () => {
     listen<{ id: string; reason: string }>(EVENTS.TELNET_CLOSED, (e) =>
       telnetStore.markClosed(e.payload.id, e.payload.reason)
     ),
+    // 收到设备回包即为真实已连接（兼容 invoke 返回时序，避免卡在“连接中”）
+    listen<{ id: string; data: string }>(EVENTS.TELNET_DATA, (e) =>
+      telnetStore.markConnected(e.payload.id)
+    ),
   ]);
 
   // RCU 模拟器：仅 VITE_MOCK_RCU=1 启动 dev 时动态加载，正常打包/开发零影响
