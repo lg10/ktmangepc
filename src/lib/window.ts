@@ -30,7 +30,7 @@ export async function openWorkbenchWindow(fresh = false) {
     return existing;
   }
   return new WebviewWindow("workbench", {
-    title: "肯天玉佩",
+    title: "Device Scan",
     url: fresh ? "/#/welcome?fresh=1" : "/#/welcome",
     width: 1360,
     height: 860,
@@ -52,7 +52,7 @@ export async function openLoginWindow() {
     return existing;
   }
   return new WebviewWindow("main", {
-    title: "肯天玉佩",
+    title: "Device Scan",
     url: "/#/login",
     width: 460,
     height: 640,

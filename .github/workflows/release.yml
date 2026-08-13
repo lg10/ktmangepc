@@ -100,7 +100,7 @@ jobs:
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 肯天玉佩-${{ matrix.target }}
+          name: KT_Device_Scan-${{ matrix.target }}
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/
           if-no-files-found: ignore
@@ -115,7 +115,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: 肯天玉佩-*
+          pattern: KT_Device_Scan-*
           path: bundles
           # 不用 merge-multiple：mac 双架构更新包同名会互相覆盖，各平台需独立子目录
 

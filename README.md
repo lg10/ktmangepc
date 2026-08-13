@@ -1,4 +1,4 @@
-# 肯天玉佩（mangePc）
+# KT Device Scan（mangePc）
 
 酒店智能设备管理工具 —— 由 Avalonia（kt-tool-2.0）迁移至 **Tauri 2.0** 的跨平台版本（macOS / Windows / Linux）。
 

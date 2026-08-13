@@ -70,7 +70,7 @@ function synthFromSig(dir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (!e.isDirectory()) continue;
     const p = path.join(dir, e.name);
-    const key = TRIPLE_TO_KEY[e.name] || TRIPLE_TO_KEY[e.name.replace(/^(bundle|肯天玉佩)-/, "")];
+    const key = TRIPLE_TO_KEY[e.name] || TRIPLE_TO_KEY[e.name.replace(/^(bundle|KT Device Scan|KT_Device_Scan)-/, "")];
     if (key && !merged.platforms[key] && tryCollect(key, p)) continue;
     synthFromSig(p);
   }

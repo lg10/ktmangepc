@@ -169,7 +169,7 @@ async function installUpdate() {
     <Card class="p-5">
       <div class="flex items-center justify-between">
         <div>
-          <div class="font-medium text-sm">肯天玉佩</div>
+          <div class="font-medium text-sm">Device Scan</div>
           <div class="text-xs text-muted-foreground mt-1">
             当前版本 v{{ appVersion || "—" }}
             <span v-if="checked && !pendingUpdate" class="ml-2 text-emerald-600 dark:text-emerald-400">已是最新</span>

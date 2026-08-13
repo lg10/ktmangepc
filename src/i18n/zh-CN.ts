@@ -1,6 +1,6 @@
 export default {
   app: {
-    name: "肯天玉佩",
+    name: "KT Device Scan",
     slogan: "酒店智能设备管理工具",
     version: "版本",
   },

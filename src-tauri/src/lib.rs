@@ -1,4 +1,4 @@
-//! 肯天玉佩 Tauri 2.0 桌面端库入口
+//! KT Device Scan Tauri 2.0 桌面端库入口
 
 pub mod auth;
 pub mod commands;
@@ -50,7 +50,7 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App("/".into()),
             )
-            .title("肯天玉佩")
+            .title("Device Scan")
             .center()
             .resizable(false)
             .inner_size(480.0, 344.0);
