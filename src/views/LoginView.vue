@@ -97,8 +97,8 @@ onUnmounted(async () => {
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-background">
-    <!-- 顶栏：macOS 原生红绿灯；Windows/Linux 右侧自绘控件 -->
-    <header class="h-10 shrink-0 flex items-center select-none" @mousedown="onDrag">
+    <!-- 顶栏：macOS 原生红绿灯；Windows/Linux 右侧自绘控件（规范高 32px） -->
+    <header class="shrink-0 flex items-center select-none" :class="isMac ? 'h-10' : 'h-8'" @mousedown="onDrag">
       <div v-if="!isMac" class="ml-auto h-full" @mousedown.stop>
         <WinControls :maximize="false" />
       </div>

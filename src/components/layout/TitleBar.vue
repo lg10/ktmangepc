@@ -39,20 +39,28 @@ function onTitleDrag(e: MouseEvent) {
   if ((e.target as HTMLElement).closest("button")) return;
   win.startDragging();
 }
+
+/** 非 Mac 双击标题栏最大化/还原（按钮区域不触发） */
+function onDblClick(e: MouseEvent) {
+  if (isMac) return;
+  if ((e.target as HTMLElement).closest("button")) return;
+  win.toggleMaximize();
+}
 </script>
 
 <template>
   <header
-    class="h-9 shrink-0 flex items-center border-b bg-muted/40 titlebar-drag select-none"
-    @dblclick="isMac ? undefined : win.toggleMaximize()"
+    class="shrink-0 flex items-center border-b bg-muted/40 titlebar-drag select-none"
+    :class="isMac ? 'h-10' : 'h-8'"
+    @dblclick="onDblClick"
     @mousedown="onTitleDrag"
   >
     <!-- macOS 原生红绿灯占位；Windows/Linux 控件在右侧（微信式平台适配） -->
     <div v-if="isMac" class="w-[70px] shrink-0" />
 
-    <!-- 酒店名称 + 详情按钮（替代旧面包屑） -->
-    <div class="flex items-center gap-2 min-w-0" :class="isMac ? 'pl-1' : 'pl-3'">
-      <Building2 class="h-3.5 w-3.5 text-primary shrink-0" />
+    <!-- 酒店名称 + 详情按钮（Windows 按规范：图标 16px、标题距左 16px） -->
+    <div class="flex items-center gap-2 min-w-0" :class="isMac ? 'pl-1' : 'pl-4'">
+      <Building2 class="h-4 w-4 text-primary shrink-0" />
       <span class="text-xs font-semibold text-foreground/90 truncate">{{ hotelLabel }}</span>
       <button
         class="titlebar-no-drag flex items-center gap-1 h-5 rounded-md px-1.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"

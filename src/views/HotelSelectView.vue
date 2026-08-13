@@ -2,17 +2,27 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Loader2, Search, ChevronLeft, ChevronRight } from "lucide-vue-next";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAuthStore } from "@/stores/auth";
 import { useHotelStore } from "@/stores/hotel";
 import { api } from "@/lib/api";
-import { setSizeLogin } from "@/lib/window";
+import { setSizeLogin, isMac } from "@/lib/window";
 import { splashFinish } from "@/lib/splash";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import WinControls from "@/components/layout/WinControls.vue";
 import type { HotelSearchRecord } from "@/types";
 
 const PAGE_SIZE = 5;
+
+const win = getCurrentWindow();
+
+/** 顶栏空白区拖动窗口（按钮不触发） */
+function onDrag(e: MouseEvent) {
+  if ((e.target as HTMLElement).closest("button")) return;
+  win.startDragging();
+}
 
 const router = useRouter();
 const route = useRoute();
@@ -108,7 +118,17 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="h-screen w-screen flex items-center justify-center bg-background select-none">
+  <div class="relative h-screen w-screen flex items-center justify-center bg-background select-none">
+    <!-- 顶栏：macOS 原生红绿灯；Windows/Linux 右侧自绘控件（规范高 32px）；空白区可拖拽 -->
+    <header
+      class="absolute top-0 left-0 right-0 flex items-center"
+      :class="isMac ? 'h-10' : 'h-8'"
+      @mousedown="onDrag"
+    >
+      <div v-if="!isMac" class="ml-auto h-full" @mousedown.stop>
+        <WinControls />
+      </div>
+    </header>
     <div class="w-[400px]">
       <p class="text-center text-[13px] tracking-[2px] text-muted-foreground">
         欢迎回来，{{ authStore.nickName || "用户" }}
