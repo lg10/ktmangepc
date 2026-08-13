@@ -593,14 +593,16 @@ pub fn xor_check(bytes: &[u8]) -> u8 {
 /// 批量授权载荷（原 AuthBatch.sendAuthTime，0xF102）：
 /// 当前时间(6B) + "01" + 授权方式(04永久/02限期) + 截止时间(6B) + 开机时长(X4) + 剩余时长(X4) + 随机(X2) + XOR(X2) + CRC16(X4)
 /// 校验基于 key(0x3039) + 内容
+/// 原实现开机/剩余时长恒写 90*24 小时（与截止时间脱节，限期授权设备侧实际按 90 天生效）；
+/// 此处 boot_hours 由调用方按截止时间计算传入，保证两者一致
 pub fn build_auth_payload(
     now: (u16, u8, u8, u8, u8, u8),
     permanent: bool,
     deadline: (u16, u8, u8, u8, u8, u8),
+    boot_hours: u16,
     random_byte: u8,
 ) -> String {
     const KEY: &str = "3039"; // 12345 的 X4
-    let boot_hours: u16 = 90 * 24;
     let mut content = format!(
         "01{}{:04X}{:02X}{:02X}{:02X}{:02X}{:02X}{:04X}{:04X}{:02X}",
         if permanent { "04" } else { "02" },
@@ -626,10 +628,9 @@ pub fn build_auth_payload(
     )
 }
 
-/// 授权下发组包：原 GetSendHeader 无 SendAuth 分支，走 default → 线上寄存器为
-/// 0xFE12（基础信息）、regNum=100，此处忠实复刻该行为，勿改为 0xF102
+/// 授权下发组包：原 GetSendHeader 有显式 SendAuth 分支 → 线上寄存器 0xF102、regNum=40
 pub fn build_auth_packet(payload_hex: &str) -> Result<Vec<u8>, String> {
-    build_packet_dyn(reg::UDP_SEND_BASE_INFO, 100, payload_hex)
+    build_packet_dyn(reg::SEND_AUTH, 40, payload_hex)
 }
 
 /// 设备回复报文中取出载荷区（跳过 12 字节 Header，按 dataLen 截断，容忍 0D0A 尾）
@@ -697,13 +698,15 @@ mod tests {
             (0x07E8, 2, 0x17, 0x0D, 9, 0x27),
             false,
             (0x07E8, 5, 0x17, 0x0D, 9, 0x27),
+            90 * 24,
             0x7B,
         );
         // 7B 时间 + 1 标记 + 1 方式 + 7B 截止 + 2+2 时长 + 1 随机 + 1 XOR + 2 CRC = 24 字节 = 48 hex
         assert_eq!(p.len(), 48);
         assert_eq!(p, "07E802170D0927010207E805170D0927087008707BAF5653");
         // 再用另一组参数重算 XOR/CRC 验证自洽
-        let q = build_auth_payload((0x07EA, 7, 23, 1, 2, 3), true, (0x0C58, 5, 23, 1, 2, 3), 0x7B);
+        let q =
+            build_auth_payload((0x07EA, 7, 23, 1, 2, 3), true, (0x0C58, 5, 23, 1, 2, 3), 90 * 24, 0x7B);
         let key_body = &q[14..q.len() - 6];
         let src = hex::decode(format!("3039{key_body}")).unwrap();
         assert_eq!(format!("{:02X}", xor_check(&src)), &q[q.len() - 6..q.len() - 4]);
@@ -736,18 +739,19 @@ mod tests {
 
     #[test]
     fn auth_packet_wire_register() {
-        // 原 default 分支：线上寄存器 0xFE12、regNum=100（并非逻辑地址 0xF102）
+        // 原 GetSendHeader SendAuth 分支：线上寄存器 0xF102、regNum=40
         let p = build_auth_payload(
             (0x07E8, 2, 0x17, 0x0D, 9, 0x27),
             false,
             (0x07E8, 5, 0x17, 0x0D, 9, 0x27),
+            90 * 24,
             0x7B,
         );
         let pkt = build_auth_packet(&p).unwrap();
         let h = Header::parse(&pkt).unwrap();
-        assert_eq!(h.reg_addr, reg::UDP_SEND_BASE_INFO);
-        assert_eq!(h.reg_num, 100);
-        assert_eq!(pkt.len(), 12 + 100 + 2);
+        assert_eq!(h.reg_addr, reg::SEND_AUTH);
+        assert_eq!(h.reg_num, 40);
+        assert_eq!(pkt.len(), 12 + 40 + 2);
     }
 
     #[test]

@@ -413,6 +413,15 @@ impl HotelService {
         let info = self.get_auth_info(hotel_id).await?;
 
         let deadline = decompose(info.deadline);
+        // 开机/剩余时长与截止时间保持一致（原实现恒写 90*24，导致限期授权设备侧固定按 90 天生效）；
+        // 永久授权沿用原 90*24 语义
+        let boot_hours: u16 = if info.permanent {
+            90 * 24
+        } else {
+            let now_secs = unix_now();
+            let hours = info.deadline.saturating_sub(now_secs) / 3600;
+            hours.min(u16::MAX as u64) as u16
+        };
         let devices = state.udp.list_devices().await;
         let mut sent = 0u32;
         for dev in devices {
@@ -421,7 +430,8 @@ impl HotelService {
             }
             let now = decompose(unix_now());
             let random = (now.5 as u8).wrapping_add(0x17).max(1); // 简单随机 1..255
-            let payload = protocol::build_auth_payload(now, info.permanent, deadline, random);
+            let payload =
+                protocol::build_auth_payload(now, info.permanent, deadline, boot_hours, random);
             match build_and_send(state, &dev.equip_id, &payload).await {
                 Ok(()) => sent += 1,
                 Err(e) => {
@@ -435,7 +445,7 @@ impl HotelService {
 }
 
 async fn build_and_send(state: &AppState, equip_id: &str, payload: &str) -> Result<(), String> {
-    // 原实现 SendAuth 走 GetSendHeader default 分支：线上寄存器 0xFE12、regNum=100
+    // 原 GetSendHeader SendAuth 分支：线上寄存器 0xF102、regNum=40
     let packet = protocol::build_auth_packet(payload)?;
     state.udp.send_raw(equip_id, packet).await
 }
