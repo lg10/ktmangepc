@@ -17,6 +17,46 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const IDLE_LIMIT_SECS: u64 = 90;
 
+/// Windows 防火墙入站规则管理：默认入站策略会丢弃局域网发来的 UDP 67，
+/// 助手以管理员运行，启动时加规则、退出时移除（按名称幂等）
+#[cfg(windows)]
+fn firewall_rule(add: bool) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let args: Vec<String> = if add {
+        let exe = std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let mut v: Vec<String> = [
+            "advfirewall", "firewall", "add", "rule", "name", "KT Device Scan DHCP",
+            "dir", "in", "action", "allow", "protocol", "UDP", "localport", "67",
+            "program",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        v.push(exe);
+        v.extend(["enable", "yes"].iter().map(|s| s.to_string()));
+        v
+    } else {
+        vec![
+            "advfirewall",
+            "firewall",
+            "delete",
+            "rule",
+            "name",
+            "KT Device Scan DHCP",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    };
+    let _ = std::process::Command::new("netsh")
+        .args(&args)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
+
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -51,6 +91,8 @@ pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
     };
     // 回包需广播到 255.255.255.255（客户端尚未取得 IP），未设置该选项时发送会静默失败
     let _ = s67.set_broadcast(true);
+    #[cfg(windows)]
+    firewall_rule(true);
     let hs = match UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, helper_port))) {
         Ok(s) => s,
         Err(e) => {
@@ -143,6 +185,8 @@ pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
     // 通知上行线程退出，避免 join 悬挂
     done.store(true, Ordering::Relaxed);
     let _ = t_up.join();
+    #[cfg(windows)]
+    firewall_rule(false);
     cleanup(nic_added, nic);
     0
 }

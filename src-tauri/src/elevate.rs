@@ -41,17 +41,23 @@ pub fn spawn_elevated(
     }
     #[cfg(target_os = "windows")]
     {
-        let arg_list: Vec<String> = args.iter().map(|a| format!("'{}'", a.replace('\'', "''"))).collect();
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // ArgumentList 内嵌双引号：防止含空格的参数（如网卡名 "Ethernet 2"）被 Start-Process 拼接时拆散；
+        // -Wait 使 powershell 驻留到助手退出，主程序据此可用 try_wait 及时察觉 UAC 取消/助手崩溃；
+        // CREATE_NO_WINDOW 避免控制台窗口闪现
+        let arg_list: Vec<String> = args.iter().map(|a| format!("'\"{a}\"'")).collect();
         return std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
                 &format!(
-                    "Start-Process -FilePath '{}' -ArgumentList {} -Verb RunAs -WindowStyle Hidden",
+                    "Start-Process -FilePath '{}' -ArgumentList {} -Verb RunAs -WindowStyle Hidden -Wait",
                     program.replace('\'', "''"),
                     arg_list.join(",")
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map(Some)
             .map_err(|e| format!("拉起提权进程失败: {e}"));
@@ -96,9 +102,12 @@ pub fn is_elevated() -> bool {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         // net session 仅管理员身份可成功执行
         return std::process::Command::new("net")
             .arg("session")
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);

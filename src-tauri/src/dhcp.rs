@@ -87,9 +87,13 @@ pub struct DhcpService {
 /// 且断网后仍可能保留假地址/默认路由，需排除以免误判
 fn is_virtual_iface(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["utun", "tun", "tap", "ppp", "wg", "wintun", "ipsec", "vpn"]
-        .iter()
-        .any(|p| lower.starts_with(p))
+    // macOS/Linux/Windows 常见虚拟接口前缀：隧道/VPN/容器网桥等不接触物理局域网
+    [
+        "utun", "tun", "tap", "ppp", "wg", "wintun", "ipsec", "vpn", "vethernet",
+        "docker", "veth", "virbr", "br-", "lxc", "cni", "flannel", "tailscale",
+    ]
+    .iter()
+    .any(|p| lower.starts_with(p))
 }
 
 /// 检测是否存在真实网络环境（外网/内网）：排除回环、本服务的 192.168.134.0/24、
@@ -253,12 +257,14 @@ fn list_all_iface_names() -> Vec<String> {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
                 "(Get-NetAdapter | Where-Object Status -eq Up).Name",
             ])
+            .creation_flags(0x0800_0000)
             .output()
             .ok()
             .map(|o| {
@@ -401,6 +407,16 @@ fn run_ip_cmd(name: &str, add: bool) -> Option<std::process::Output> {
             ],
         )
     };
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new(prog)
+            .args(&args)
+            .creation_flags(0x0800_0000)
+            .output()
+            .ok()
+    }
+    #[cfg(not(windows))]
     std::process::Command::new(prog).args(&args).output().ok()
 }
 
@@ -583,14 +599,13 @@ async fn wait_relay_ready(
         if Instant::now() >= deadline {
             return Err(());
         }
-        #[cfg(target_os = "macos")]
+        // 提权拉起的进程（osascript/pkexec/sudo/powershell -Wait）在助手存活期间保持存活；
+        // 提前退出 = 用户取消授权或助手启动失败，尽快报错
         if let Some(c) = child.as_mut() {
             if let Ok(Some(_)) = c.try_wait() {
                 return Err(());
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = child.as_mut();
         match tokio::time::timeout(Duration::from_secs(1), sock.recv_from(&mut buf)).await {
             Ok(Ok((len, _))) if len >= 5 && &buf[..5] == b"READY" => return Ok(()),
             Ok(_) => continue,
