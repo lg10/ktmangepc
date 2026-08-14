@@ -18,6 +18,7 @@ import {
 import {
   Radio,
   Zap,
+  Globe,
   LockKeyhole,
   RefreshCw,
   Loader2,
@@ -47,6 +48,12 @@ const modeCards = computed(() => [
     desc: t("launch.superDesc"),
   },
   {
+    mode: 3 as RunMode,
+    icon: Globe,
+    title: t("launch.global"),
+    desc: t("launch.globalDesc"),
+  },
+  {
     mode: 4 as RunMode,
     icon: LockKeyhole,
     title: t("launch.lock"),
@@ -71,7 +78,8 @@ async function refreshInterfaces() {
 }
 
 async function start() {
-  if (!deviceStore.selectedNic) {
+  // 全局扫描免选网卡；其余模式需先选工作网卡
+  if (selectedMode.value !== 3 && !deviceStore.selectedNic) {
     toast({ title: "请先选择工作网卡", variant: "destructive" });
     return;
   }
@@ -90,7 +98,11 @@ async function start() {
             .map((s) => s.trim())
             .filter(Boolean)
         : [];
-    await api.startUdpServer(deviceStore.selectedNic, selectedMode.value, segments);
+    await api.startUdpServer(
+      selectedMode.value === 3 ? "" : deviceStore.selectedNic,
+      selectedMode.value,
+      segments
+    );
     deviceStore.mode = selectedMode.value;
     // 启动成功即进入设备监控；停止服务后由监控页返回本页
     router.push({ name: "monitor" });
@@ -114,8 +126,8 @@ async function start() {
       选择网卡与工作方式后启动服务，自动进入设备监控；DHCP 服务请在设置中开启
     </p>
 
-    <!-- 网卡选择 -->
-    <Card class="mt-6 p-5">
+    <!-- 网卡选择（全局扫描免选，自动覆盖所有网卡） -->
+    <Card v-if="selectedMode !== 3" class="mt-6 p-5">
       <div class="flex items-end gap-3">
         <div class="flex-1 space-y-1.5">
           <Label>{{ t("launch.interface") }}</Label>

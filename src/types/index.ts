@@ -10,7 +10,7 @@ export interface NetInterface {
   up: boolean;
 }
 
-/** 运行模式：1 普通扫描 2 超级模式 3 DHCP 4 门锁扫描 */
+/** 运行模式：1 普通扫描 2 超级模式 3 全局扫描 4 门锁扫描 */
 export type RunMode = 1 | 2 | 3 | 4;
 
 /** UDP 服务状态 */

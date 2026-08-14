@@ -199,6 +199,34 @@ pub async fn list_network_interfaces() -> Result<Vec<NetInterfaceView>, String> 
     Ok(entries)
 }
 
+/// 全局扫描可用地址：所有非环回、非 APIPA 的 IPv4，按名称过滤隧道/虚拟网卡，
+/// 避免向 VPN 网段白发广播
+pub fn usable_scan_addrs() -> Vec<(String, std::net::Ipv4Addr)> {
+    const TUNNEL_PREFIXES: [&str; 8] = [
+        "tun", "tap", "ppp", "wg", "utun", "vpn", "veth", "bridge",
+    ];
+    let Ok(list) = local_ip_address::list_afinet_netifas() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (name, ip) in list {
+        let IpAddr::V4(v4) = ip else { continue };
+        if v4.is_loopback() {
+            continue;
+        }
+        let o = v4.octets();
+        if o[0] == 169 && o[1] == 254 {
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        if TUNNEL_PREFIXES.iter().any(|p| lower.starts_with(p)) {
+            continue;
+        }
+        out.push((name, v4));
+    }
+    out
+}
+
 /// 按网卡名解析其 IPv4（扫描/DHCP 启动用）：
 /// 名字为空时智能兜底（唯一 134 段 > 唯一 Up 有 IP），无 IPv4 时报错引导先开 DHCP
 pub fn resolve_nic_ipv4(name: &str) -> Result<std::net::Ipv4Addr, String> {

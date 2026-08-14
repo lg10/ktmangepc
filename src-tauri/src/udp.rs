@@ -54,6 +54,8 @@ pub struct LockPacketView {
 struct DeviceEntry {
     model: UdpModel,
     addr: SocketAddr,
+    /// 发现该设备的链路本地 IP（全局模式下据此选回对应网卡 socket 下发）
+    via: Option<Ipv4Addr>,
     last_seen: Instant,
     offline_count: u32,
 }
@@ -119,6 +121,10 @@ struct ServiceInner {
     devices: HashMap<String, DeviceEntry>,
     lock_packets: VecDeque<LockPacketView>,
     socket: Option<Arc<UdpSocket>>,
+    /// 全局扫描模式：每网卡一个 socket（绑定 IP, socket）；单网卡模式为空
+    sockets: Vec<(Ipv4Addr, Arc<UdpSocket>)>,
+    /// 当前扫描代取消令牌（全局模式：网卡/IP 变化时取消本代并重建）
+    gen: Option<CancellationToken>,
     cancel: Option<CancellationToken>,
 }
 
@@ -183,6 +189,11 @@ impl UdpService {
         // 先停掉旧实例
         self.stop_inner(&app).await;
 
+        // 全局扫描：多网卡多 socket，由独立世代循环管理（含网卡变化重建）
+        if mode == 3 {
+            return self.start_global(app).await;
+        }
+
         let (socket, port, ip) = if mode == 4 {
             // 门锁模式：0.0.0.0:8787
             let (s, p) = bind_socket(Ipv4Addr::UNSPECIFIED, LOCK_PORT, 1)?;
@@ -226,6 +237,7 @@ impl UdpService {
             app.clone(),
             socket.clone(),
             cancel.clone(),
+            ip.parse::<Ipv4Addr>().ok(),
         ));
 
         if mode != 4 {
@@ -247,6 +259,48 @@ impl UdpService {
         Ok(port)
     }
 
+    /// 全局扫描启动：枚举全部可用网卡 IPv4 各绑一个 socket；
+    /// 世代循环负责绑定/重建（运行中网卡或 IP 变化时自动重建，设备列表保留）
+    async fn start_global(&self, app: AppHandle) -> Result<u16, String> {
+        if crate::netif::usable_scan_addrs().is_empty() {
+            return Err("没有可用的扫描网卡：所有网卡均无可用 IPv4。请先连接网络，或对直连设备的网口在设置中开启 DHCP".into());
+        }
+        let cancel = CancellationToken::new();
+        {
+            let mut inner = self.inner.lock().await;
+            inner.running = true;
+            inner.mode = 3;
+            inner.ip = String::new();
+            inner.port = 0;
+            inner.devices.clear();
+            inner.lock_packets.clear();
+            inner.socket = None;
+            inner.sockets.clear();
+            inner.cancel = Some(cancel.clone());
+        }
+        let (udp_svc, update_svc, filestore_svc) = {
+            let st = app.state::<crate::state::AppState>();
+            (st.udp.clone(), st.update.clone(), st.filestore.clone())
+        };
+        tokio::spawn(global_generation(
+            udp_svc,
+            update_svc,
+            filestore_svc,
+            app.clone(),
+            cancel,
+        ));
+        // 等首代绑定就绪（最多 5 秒）
+        for _ in 0..50 {
+            let p = self.inner.lock().await.port;
+            if p > 0 {
+                emit_log(&app, format!("UDP 服务已启动（全局扫描，端口 {p}）"));
+                return Ok(p);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        Err("全局扫描启动失败：端口绑定超时".into())
+    }
+
     pub async fn stop(&self, app: &AppHandle) {
         self.stop_inner(app).await;
     }
@@ -256,10 +310,14 @@ impl UdpService {
         if !inner.running {
             return;
         }
+        if let Some(g) = inner.gen.take() {
+            g.cancel();
+        }
         if let Some(c) = inner.cancel.take() {
             c.cancel();
         }
         inner.socket = None;
+        inner.sockets.clear();
         inner.running = false;
         inner.devices.clear();
         inner.lock_packets.clear();
@@ -294,18 +352,27 @@ impl UdpService {
         inner.lock_packets.iter().cloned().collect()
     }
 
-    /// 向指定设备下发报文
+    /// 向指定设备下发报文：优先走发现该设备的网卡 socket（全局模式），
+    /// 单网卡模式回退到唯一 socket
     async fn send_to_device(&self, equip_id: &str, packet: Vec<u8>) -> Result<(), String> {
         let inner = self.inner.lock().await;
-        let socket = inner
-            .socket
-            .clone()
-            .ok_or_else(|| "UDP 服务未启动".to_string())?;
-        let addr = inner
+        let entry = inner
             .devices
             .get(equip_id)
-            .map(|d| d.addr)
             .ok_or_else(|| format!("设备不存在或已离线: {equip_id}"))?;
+        let addr = entry.addr;
+        let socket = entry
+            .via
+            .and_then(|v| {
+                inner
+                    .sockets
+                    .iter()
+                    .find(|(ip, _)| *ip == v)
+                    .map(|(_, s)| s.clone())
+            })
+            .or_else(|| inner.socket.clone())
+            .or_else(|| inner.sockets.first().map(|(_, s)| s.clone()))
+            .ok_or_else(|| "UDP 服务未启动".to_string())?;
         drop(inner);
         socket
             .send_to(&packet, addr)
@@ -356,7 +423,7 @@ impl UdpService {
     }
 }
 
-/// 接收循环：解析设备回复 / 门锁报文
+/// 接收循环：解析设备回复 / 门锁报文；local_ip = 本 socket 绑定 IP（记录设备发现链路）
 async fn recv_loop(
     udp: Arc<UdpService>,
     update: Arc<crate::upgrade::UpdateService>,
@@ -364,6 +431,7 @@ async fn recv_loop(
     app: AppHandle,
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
+    local_ip: Option<Ipv4Addr>,
 ) {
     let mut buf = vec![0u8; 4096];
     loop {
@@ -373,7 +441,7 @@ async fn recv_loop(
                 match res {
                     Ok((len, src)) => {
                         let data = buf[..len].to_vec();
-                        handle_packet(&udp, &update, &filestore, &app, &data, src).await;
+                        handle_packet(&udp, &update, &filestore, &app, &data, src, local_ip).await;
                     }
                     Err(_) => {
                         // socket 已关闭
@@ -385,6 +453,161 @@ async fn recv_loop(
     }
 }
 
+/// 全局扫描世代循环：枚举可用网卡 → 每 IP 绑一个 socket → 拉起收发/发现/心跳循环；
+/// 每 30 秒检测网卡/IP 集合变化（扫描中开关 DHCP、插拔网线等），变化则取消本代重建，
+/// 设备列表跨代保留，旧链路设备由心跳自然掉线移除
+async fn global_generation(
+    svc: Arc<UdpService>,
+    update: Arc<crate::upgrade::UpdateService>,
+    filestore: Arc<crate::filestore::FileStore>,
+    app: AppHandle,
+    master: CancellationToken,
+) {
+    loop {
+        if master.is_cancelled() {
+            return;
+        }
+        let addrs = crate::netif::usable_scan_addrs();
+        if addrs.is_empty() {
+            emit_log(
+                &app,
+                "全局扫描：暂无可用网卡（全部断开或无 IPv4），10 秒后重试…".into(),
+            );
+            tokio::select! {
+                _ = master.cancelled() => return,
+                _ = tokio::time::sleep(Duration::from_secs(10)) => continue,
+            }
+        }
+        let gen = CancellationToken::new();
+        let (socks, port) = match bind_all(&addrs) {
+            Ok(v) => v,
+            Err(e) => {
+                emit_log(&app, format!("全局扫描绑定失败：{e}，5 秒后重试"));
+                tokio::select! {
+                    _ = master.cancelled() => return,
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => continue,
+                }
+            }
+        };
+        let ip_text = socks
+            .iter()
+            .map(|(ip, _)| ip.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        {
+            let mut inner = svc.inner.lock().await;
+            inner.gen = Some(gen.clone());
+            inner.sockets = socks.clone();
+            inner.port = port;
+            inner.ip = ip_text.clone();
+        }
+        emit_log(&app, format!("全局扫描：覆盖网卡 IP [{ip_text}]，端口 {port}"));
+        svc.emit_status(&app).await;
+        for (ip, sock) in &socks {
+            tokio::spawn(recv_loop(
+                svc.clone(),
+                update.clone(),
+                filestore.clone(),
+                app.clone(),
+                sock.clone(),
+                gen.clone(),
+                Some(*ip),
+            ));
+        }
+        tokio::spawn(find_multi(socks.clone(), gen.clone()));
+        tokio::spawn(heart_loop(svc.clone(), app.clone(), gen.clone()));
+
+        // 网卡/IP 变化看门狗：每 30 秒对比当前绑定集合与最新枚举
+        let (svc_w, app_w, gen_w, master_w) = (svc.clone(), app.clone(), gen.clone(), master.clone());
+        let watch = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.tick().await; // 首次立即触发，跳过
+            loop {
+                tokio::select! {
+                    _ = master_w.cancelled() => return,
+                    _ = gen_w.cancelled() => return,
+                    _ = interval.tick() => {}
+                }
+                let cur: Vec<Ipv4Addr> = svc_w
+                    .inner
+                    .lock()
+                    .await
+                    .sockets
+                    .iter()
+                    .map(|(ip, _)| *ip)
+                    .collect();
+                let new: Vec<Ipv4Addr> = crate::netif::usable_scan_addrs()
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect();
+                if cur.len() != new.len() || !cur.iter().all(|c| new.contains(c)) {
+                    emit_log(&app_w, "检测到网卡/IP 变化，全局扫描正在重建…".into());
+                    gen_w.cancel();
+                    return;
+                }
+            }
+        });
+
+        tokio::select! {
+            _ = master.cancelled() => {
+                gen.cancel();
+                watch.abort();
+                return;
+            }
+            _ = gen.cancelled() => {
+                // 网卡变化或需重建：进入下一代（设备列表保留）
+            }
+        }
+    }
+}
+
+/// 为全部地址绑定同一端口的 socket（从 BASE_PORT 起顺延，直到所有地址都能绑定）
+fn bind_all(
+    addrs: &[(String, Ipv4Addr)],
+) -> Result<(Vec<(Ipv4Addr, Arc<UdpSocket>)>, u16), String> {
+    for i in 0..MAX_ATTEMPTS {
+        let port = BASE_PORT + i;
+        let mut socks: Vec<(Ipv4Addr, Arc<UdpSocket>)> = Vec::with_capacity(addrs.len());
+        let mut ok = true;
+        for (_, ip) in addrs {
+            match bind_socket(*ip, port, 1) {
+                Ok((s, _)) => socks.push((*ip, Arc::new(s))),
+                Err(_) => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            return Ok((socks, port));
+        }
+    }
+    Err(format!(
+        "端口 {BASE_PORT}-{} 区间内找不到对所有网卡均可用的端口",
+        BASE_PORT + MAX_ATTEMPTS - 1
+    ))
+}
+
+/// 全局扫描发现循环：每个 socket 从自己的 IP 发本子网定向广播 + 受限广播
+async fn find_multi(socks: Vec<(Ipv4Addr, Arc<UdpSocket>)>, cancel: CancellationToken) {
+    let packet = find_packet();
+    let burst_end = Instant::now() + Duration::from_secs(10);
+    loop {
+        for (ip, sock) in &socks {
+            let o = ip.octets();
+            let directed: SocketAddr = (Ipv4Addr::new(o[0], o[1], o[2], 255), FIND_PORT).into();
+            let limited: SocketAddr = (Ipv4Addr::new(255, 255, 255, 255), FIND_PORT).into();
+            let _ = sock.send_to(&packet, directed).await;
+            let _ = sock.send_to(&packet, limited).await;
+        }
+        let period = if Instant::now() < burst_end { 1 } else { 3 };
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = tokio::time::sleep(Duration::from_secs(period)) => {}
+        }
+    }
+}
+
 async fn handle_packet(
     svc: &UdpService,
     update: &crate::upgrade::UpdateService,
@@ -392,6 +615,7 @@ async fn handle_packet(
     app: &AppHandle,
     data: &[u8],
     src: SocketAddr,
+    local_ip: Option<Ipv4Addr>,
 ) {
     let mode = { svc.inner.lock().await.mode };
 
@@ -454,12 +678,16 @@ async fn handle_packet(
                     DeviceEntry {
                         model: model.clone(),
                         addr: src,
+                        via: local_ip,
                         last_seen: Instant::now(),
                         offline_count: 0,
                     }
                 });
                 entry.model = model;
                 entry.addr = src;
+                if local_ip.is_some() {
+                    entry.via = local_ip;
+                }
                 entry.last_seen = Instant::now();
                 entry.offline_count = 0;
                 entry.view()

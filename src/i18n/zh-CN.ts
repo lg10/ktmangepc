@@ -32,6 +32,8 @@ export default {
     refresh: "刷新",
     normal: "普通扫描",
     normalDesc: "广播发现本网段 RCU 设备",
+    global: "全局扫描",
+    globalDesc: "自动覆盖所有网卡免选网卡，下发自动走对应链路",
     super: "超级模式",
     superDesc: "指定网段并行扫描发现设备",
     segments: "目标网段",

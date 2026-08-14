@@ -127,7 +127,9 @@ export function startMockRcu() {
   store = useDeviceStore();
   log("RCU 模拟器已加载（VITE_MOCK_RCU=1）");
   store.$subscribe((_m, state) => {
-    const on = state.status.running && (state.status.mode === 1 || state.status.mode === 2);
+    const on =
+      state.status.running &&
+      (state.status.mode === 1 || state.status.mode === 2 || state.status.mode === 3);
     if (on && !active) begin();
     else if (!on && active) stop();
   });
