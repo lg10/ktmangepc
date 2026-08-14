@@ -83,6 +83,22 @@ pub fn adapter_is_up(name: &str) -> bool {
     }
 }
 
+/// 指定网卡当前持有的非环回 IPv4（网络中继源网卡断线监控用；无则 None）
+pub fn adapter_ipv4(name: &str) -> Option<String> {
+    local_ip_address::list_afinet_netifas()
+        .ok()?
+        .into_iter()
+        .find_map(|(n, ip)| {
+            if !n.eq_ignore_ascii_case(name) {
+                return None;
+            }
+            match ip {
+                IpAddr::V4(v4) if !v4.is_loopback() => Some(v4.to_string()),
+                _ => None,
+            }
+        })
+}
+
 #[tauri::command]
 pub async fn list_network_interfaces() -> Result<Vec<NetInterfaceView>, String> {
     let list = local_ip_address::list_afinet_netifas().map_err(|e| e.to_string())?;

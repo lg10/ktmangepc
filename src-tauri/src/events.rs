@@ -11,6 +11,7 @@ pub const QR_STATE: &str = "auth://qr-state";
 pub const SPLASH_LOG: &str = "splash://update";
 pub const DHCP_STATUS: &str = "dhcp://status";
 pub const DHCP_LEASE: &str = "dhcp://lease";
+pub const INET_STATUS: &str = "inet://status";
 // 阶段二
 pub const FILE_FETCH_PROGRESS: &str = "file://fetch-progress";
 pub const TASK_UPDATE: &str = "task://update";

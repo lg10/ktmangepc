@@ -8,6 +8,7 @@ import type {
   FileKind,
   HotelState,
   HotelSearchResult,
+  InetShareStatus,
   LockPacket,
   NetInterface,
   NetworkConfig,
@@ -33,6 +34,7 @@ export const EVENTS = {
   SPLASH_LOG: "splash://update",
   DHCP_STATUS: "dhcp://status",
   DHCP_LEASE: "dhcp://lease",
+  INET_STATUS: "inet://status",
   FILE_FETCH_PROGRESS: "file://fetch-progress",
   TASK_UPDATE: "task://update",
   TELNET_DATA: "telnet://data",
@@ -103,6 +105,13 @@ export const api = {
   stopDhcp: () => invoke<void>("stop_dhcp"),
   dhcpStatus: () => invoke<DhcpStatus>("get_dhcp_status"),
   dhcpLeases: () => invoke<DhcpLease[]>("get_dhcp_leases"),
+
+  /** 网络中继：调用系统互联网共享（Windows ICS / macOS 互联网共享），
+   * 把源网卡的网络共享给目标网口给设备供网；与内置 DHCP 互斥，需系统管理员授权 */
+  startInetShare: (src: string, dst: string) =>
+    invoke<void>("start_inet_share", { src, dst }),
+  stopInetShare: () => invoke<void>("stop_inet_share"),
+  inetShareStatus: () => invoke<InetShareStatus>("get_inet_share_status"),
 
   /** 文件库（云端拉取） */
   fetchFile: (kind: FileKind, url: string) =>

@@ -5,6 +5,7 @@ use crate::db::DbService;
 use crate::dhcp::DhcpService;
 use crate::filestore::FileStore;
 use crate::hotel::HotelService;
+use crate::inetshare::InetShareService;
 use crate::telnet::TelnetService;
 use crate::udp::UdpService;
 use crate::upgrade::UpdateService;
@@ -20,4 +21,5 @@ pub struct AppState {
     pub update: Arc<UpdateService>,
     pub hotel: Arc<HotelService>,
     pub telnet: Arc<TelnetService>,
+    pub inetshare: Arc<InetShareService>,
 }

@@ -490,6 +490,10 @@ impl DhcpService {
         auto_mode: bool,
         force: bool,
     ) -> Result<(), String> {
+        // 与网络中继互斥：系统共享自带 DHCP，双 DHCP 会互相干扰
+        if app.state::<crate::state::AppState>().inetshare.is_running().await {
+            return Err("网络中继正在运行（设备经系统共享上网），与内置 DHCP 互斥，请先在设置页停止中继".into());
+        }
         // 所选网卡链路已断开：仅警告不阻断——直连设备场景常需先开 DHCP 再插网线/上电设备
         if !interface_name.is_empty() && !crate::netif::adapter_is_up(&interface_name) {
             let _ = app.emit(
@@ -609,6 +613,36 @@ impl DhcpService {
 
     pub async fn stop(&self, app: &AppHandle) {
         self.stop_inner(app).await;
+    }
+
+    pub async fn is_running(&self) -> bool {
+        self.inner.lock().await.running
+    }
+
+    /// 应用退出清理（同步、尽力而为）：直连模式还原网卡地址并停伪互联网，
+    /// 中继模式向助手发退出指令（助手会移除网卡地址）；失败时助手 90 秒看门狗兜底
+    pub fn exit_cleanup(&self) {
+        let Ok(mut inner) = self.inner.try_lock() else {
+            return;
+        };
+        if !inner.running {
+            return;
+        }
+        inner.fake.take();
+        if let Some(nic) = inner.nic_ip_added.take() {
+            remove_subnet_ip(&nic, inner.nic_was_dhcp);
+            inner.nic_was_dhcp = false;
+        }
+        if inner.relay_socket.take().is_some() {
+            // 新开 std socket 发退出指令（relay_socket 为 Arc 共享句柄，不可转换）
+            if let Ok(s) = std::net::UdpSocket::bind("127.0.0.1:0") {
+                let cmd = [0u8; 6]; // 目标端口 0 = 退出指令
+                let helper: std::net::SocketAddr =
+                    (std::net::Ipv4Addr::LOCALHOST, RELAY_HELPER_PORT).into();
+                let _ = s.send_to(&cmd, helper);
+            }
+        }
+        inner.running = false;
     }
 
     async fn stop_inner(&self, app: &AppHandle) {

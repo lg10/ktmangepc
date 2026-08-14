@@ -120,6 +120,15 @@ export interface DhcpLease {
   ts: number;
 }
 
+/** 网络中继（互联网共享）状态：把源网卡（如 Wi-Fi）的网络共享给目标网口给设备供网 */
+export interface InetShareStatus {
+  running: boolean;
+  /** 源网卡（有网络的，如 Wi-Fi） */
+  src: string;
+  /** 目标网口（接设备的，含 USB 转接网口） */
+  dst: string;
+}
+
 /** 文件类型：firmware 固件 / config 配置 */
 export type FileKind = "firmware" | "config";
 

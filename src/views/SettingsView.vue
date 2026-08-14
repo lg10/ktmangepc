@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import { Loader2, RefreshCw } from "lucide-vue-next";
-import type { DhcpLease, DhcpStatus, NetInterface } from "@/types";
+import type { DhcpLease, DhcpStatus, InetShareStatus, NetInterface } from "@/types";
 
 const deviceStore = useDeviceStore();
 const { toast } = useToast();
@@ -58,6 +58,49 @@ function setDhcpAuto(v: boolean) {
   localStorage.setItem("kt.dhcpAuto", v ? "1" : "0");
 }
 let unlisten: UnlistenFn | null = null;
+let unlistenInet: UnlistenFn | null = null;
+
+/** 网络中继（互联网共享）：把源网卡的网络共享给目标网口，给直连设备供网 */
+const inetShare = ref<InetShareStatus>({ running: false, src: "", dst: "" });
+const inetBusy = ref<"" | "starting" | "stopping">("");
+const inetSrc = ref("");
+const inetDst = ref("");
+/** 源网卡候选：链路已连接且持有 IPv4（即当前有网络的网卡） */
+const srcNics = computed(() =>
+  nicList.value.filter((n) => n.up && n.hasIpv4 && n.name !== inetDst.value)
+);
+/** 目标网口候选：链路已连接且非源网卡（含 USB 转接网口） */
+const dstNics = computed(() =>
+  nicList.value.filter((n) => n.up && n.name !== inetSrc.value)
+);
+
+async function toggleInetShare(v: boolean) {
+  if (!v) {
+    inetBusy.value = "stopping";
+    try {
+      await api.stopInetShare();
+      inetShare.value = await api.inetShareStatus();
+    } catch (e) {
+      toast({ title: "停止失败", description: String(e), variant: "destructive" });
+    } finally {
+      inetBusy.value = "";
+    }
+    return;
+  }
+  if (!inetSrc.value || !inetDst.value) {
+    toast({ title: "请先选择源网卡和目标网口", variant: "destructive" });
+    return;
+  }
+  inetBusy.value = "starting";
+  try {
+    await api.startInetShare(inetSrc.value, inetDst.value);
+    inetShare.value = await api.inetShareStatus();
+  } catch (e) {
+    toast({ title: "开启共享失败", description: String(e), variant: "destructive" });
+  } finally {
+    inetBusy.value = "";
+  }
+}
 
 /** 确认弹窗：真实网络风险（手动启动 DHCP 时检测到非离线环境） */
 const confirmRealNetwork = ref(false);
@@ -96,17 +139,21 @@ onMounted(async () => {
   } catch {
     appVersion.value = "3.0.1";
   }
-  await refresh();
+  await Promise.all([refresh(), reloadNics()]);
   unlisten = await listen<DhcpLease>(EVENTS.DHCP_LEASE, (e) => {
     // 按 MAC 去重：同一设备重复请求只保留一行，避免刷屏
     const i = leases.value.findIndex((l) => l.mac === e.payload.mac);
     if (i >= 0) leases.value.splice(i, 1);
     leases.value.push(e.payload);
   });
+  unlistenInet = await listen<InetShareStatus>(EVENTS.INET_STATUS, (e) => {
+    inetShare.value = e.payload;
+  });
 });
 
 onUnmounted(() => {
   unlisten?.();
+  unlistenInet?.();
   // 离开设置页时刷新首页网卡列表（开关 DHCP 会改变网卡 IP 展示）
   deviceStore.loadInterfaces();
 });
@@ -114,6 +161,11 @@ onUnmounted(() => {
 async function refresh() {
   try {
     dhcp.value = await api.dhcpStatus();
+  } catch {
+    /* ignore */
+  }
+  try {
+    inetShare.value = await api.inetShareStatus();
   } catch {
     /* ignore */
   }
@@ -328,7 +380,7 @@ async function installUpdate() {
           <Badge v-else variant="secondary">已停止</Badge>
           <Switch
             :model-value="dhcp.running"
-            :disabled="dhcpBusy !== ''"
+            :disabled="dhcpBusy !== '' || (!dhcp.running && inetShare.running)"
             @update:model-value="toggleDhcp"
           />
         </div>
@@ -362,6 +414,74 @@ async function installUpdate() {
           <div v-if="leaseList.length === 0" class="text-xs text-muted-foreground py-2">
             暂无租约
           </div>
+        </div>
+      </template>
+    </Card>
+
+    <!-- 网络中继（互联网共享） -->
+    <Card class="p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium text-sm">网络中继（给设备供网）</div>
+          <div class="text-xs text-muted-foreground mt-1">
+            用系统内置共享把源网卡（如 Wi-Fi）的互联网中继给目标网口，设备即可上网；
+            设备 IP 由系统分配（Windows 192.168.137.x / macOS 192.168.2.x），与内置 DHCP 互斥
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <Badge v-if="inetShare.running" variant="success">
+            共享中 {{ inetShare.src }} → {{ inetShare.dst }}
+          </Badge>
+          <Badge v-else-if="inetBusy === 'starting'" variant="secondary">
+            <Loader2 class="mr-1 h-3 w-3 animate-spin" />共享开启中…
+          </Badge>
+          <Badge v-else-if="inetBusy === 'stopping'" variant="secondary">
+            <Loader2 class="mr-1 h-3 w-3 animate-spin" />正在停止…
+          </Badge>
+          <Badge v-else variant="secondary">已停止</Badge>
+          <Switch
+            :model-value="inetShare.running"
+            :disabled="inetBusy !== '' || (!inetShare.running && dhcp.running)"
+            @update:model-value="toggleInetShare"
+          />
+        </div>
+      </div>
+
+      <template v-if="!inetShare.running">
+        <div class="mt-4 grid grid-cols-2 gap-3">
+          <div>
+            <div class="text-xs font-medium mb-1.5">源网卡（需有互联网）</div>
+            <Select v-model="inetSrc">
+              <SelectTrigger placeholder="选择有网络的网卡" />
+              <SelectContent>
+                <SelectItem
+                  v-for="nic in srcNics"
+                  :key="nic.name + nic.ip"
+                  :value="nic.name"
+                >
+                  {{ nic.name }}（{{ nic.ip }}）
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <div class="text-xs font-medium mb-1.5">目标网口（接设备，支持 USB 转接）</div>
+            <Select v-model="inetDst">
+              <SelectTrigger placeholder="选择接设备的网口" />
+              <SelectContent>
+                <SelectItem
+                  v-for="nic in dstNics"
+                  :key="nic.name + nic.ip"
+                  :value="nic.name"
+                >
+                  {{ nic.name }}（{{ nic.ip || "未配置 IPv4，共享后由系统自动配置" }}）
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div v-if="dhcp.running" class="text-xs text-muted-foreground mt-3">
+          内置 DHCP 正在运行，与网络中继互斥，请先停止 DHCP 再开启
         </div>
       </template>
     </Card>
