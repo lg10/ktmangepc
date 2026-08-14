@@ -32,8 +32,8 @@ let unlisteners: UnlistenFn[] = [];
 onMounted(async () => {
   unlisteners = await Promise.all([
     listen<RcuDevice>(EVENTS.DEVICE, (e) => deviceStore.upsertDevice(e.payload)),
-    listen<{ equipId: string }>(EVENTS.DEVICE_OFFLINE, (e) =>
-      deviceStore.removeDevice(e.payload.equipId)
+    listen<string>(EVENTS.DEVICE_OFFLINE, (e) =>
+      deviceStore.removeDevice(e.payload)
     ),
     listen<LockPacket>(EVENTS.LOCK_PACKET, (e) =>
       deviceStore.pushLockPacket(e.payload)
