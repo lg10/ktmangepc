@@ -212,17 +212,26 @@ pub fn resolve_nic_ipv4(name: &str) -> Result<std::net::Ipv4Addr, String> {
         .collect();
 
     if !name.is_empty() {
-        // 优先取非 169.254 的地址（APIPA 不可用于通讯）
+        // 同一网卡可持有多个 IPv4（如原有主地址 + DHCP 添加的 134.1 副地址）：
+        // 优先 192.168.134 段（设备通讯段，DHCP 专为直连设备配置），其次任意非 APIPA，
+        // 避免系统枚举顺序不确定导致绑定错网段、扫描广播发不到设备
         let mut aipa = None;
+        let mut other = None;
         for (n, v4) in &all {
-            if n.eq_ignore_ascii_case(name) {
-                let o = v4.octets();
-                if o[0] == 169 && o[1] == 254 {
-                    aipa = Some(*v4);
-                } else {
-                    return Ok(*v4);
-                }
+            if !n.eq_ignore_ascii_case(name) {
+                continue;
             }
+            let o = v4.octets();
+            if o[0] == 169 && o[1] == 254 {
+                aipa = Some(*v4);
+            } else if o[..3] == [192, 168, 134] {
+                return Ok(*v4);
+            } else if other.is_none() {
+                other = Some(*v4);
+            }
+        }
+        if let Some(v) = other {
+            return Ok(v);
         }
         if aipa.is_some() {
             return Err(format!(
