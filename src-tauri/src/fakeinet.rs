@@ -25,7 +25,7 @@ impl FakeInternet {
     /// 启动伪 DNS / 伪 HTTP 服务；log 用于把设备探测行为上报到日志面板
     pub fn start<L>(log: L) -> Self
     where
-        L: Fn(String) + Send + 'static,
+        L: Fn(String) + Send + Sync + 'static,
     {
         let stop = Arc::new(AtomicBool::new(false));
         let log = Arc::new(log);
