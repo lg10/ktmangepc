@@ -49,6 +49,8 @@ const dhcp = ref<DhcpStatus>({
   autoMode: false,
 });
 const leases = ref<DhcpLease[]>([]);
+/** DHCP 启停中（后端同步等待网卡配置/助手还原，返回即最新状态） */
+const dhcpBusy = ref<"" | "starting" | "stopping">("");
 /** 智能模式：检测到真实网络自动跳过（仅网线直连离线场景启用），持久化 */
 const dhcpAuto = ref(localStorage.getItem("kt.dhcpAuto") === "1");
 function setDhcpAuto(v: boolean) {
@@ -105,6 +107,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   unlisten?.();
+  // 离开设置页时刷新首页网卡列表（开关 DHCP 会改变网卡 IP 展示）
+  deviceStore.loadInterfaces();
 });
 
 async function refresh() {
@@ -131,16 +135,21 @@ async function toggleDhcp(v: boolean) {
     await openNicDialog();
     return;
   }
+  dhcpBusy.value = "stopping";
   try {
     await api.stopDhcp();
     toast({ title: "DHCP 服务已停止" });
     await refresh();
+    // 停止会移除 134.1：同步刷新首页网卡列表（后端已等助手还原完毕）
+    deviceStore.loadInterfaces();
   } catch (e) {
     toast({
       title: "DHCP 停止失败",
       description: String(e),
       variant: "destructive",
     });
+  } finally {
+    dhcpBusy.value = "";
   }
 }
 
@@ -163,18 +172,24 @@ async function confirmNicSelected() {
 
 /** 启动 DHCP：未提权时后端会弹系统密码框拉起特权助手中继，无需重启应用 */
 async function doStartDhcp(force: boolean) {
+  dhcpBusy.value = "starting";
   try {
     await api.startDhcp(dhcpNic.value, dhcpAuto.value, force);
     toast({ title: "DHCP 服务已启动", variant: "success" });
     await refresh();
+    // 启动会添加 134.1：同步刷新首页网卡列表
+    deviceStore.loadInterfaces();
   } catch (e) {
     const msg = String(e);
     if (msg.startsWith("REAL_NETWORK:")) {
+      // 转交风险确认弹窗（点「仍然启动」会再次进入本函数）
       realNetworkMsg.value = msg.slice("REAL_NETWORK:".length);
       confirmRealNetwork.value = true;
       return;
     }
     throw e;
+  } finally {
+    dhcpBusy.value = "";
   }
 }
 
@@ -304,8 +319,18 @@ async function installUpdate() {
           <Badge v-if="dhcp.running" variant="success">
             运行中 {{ dhcp.interfaceName }}（{{ dhcp.serverIp }}）
           </Badge>
+          <Badge v-else-if="dhcpBusy === 'starting'" variant="secondary">
+            <Loader2 class="mr-1 h-3 w-3 animate-spin" />DHCP 启用中…
+          </Badge>
+          <Badge v-else-if="dhcpBusy === 'stopping'" variant="secondary">
+            <Loader2 class="mr-1 h-3 w-3 animate-spin" />正在停止…
+          </Badge>
           <Badge v-else variant="secondary">已停止</Badge>
-          <Switch :model-value="dhcp.running" @update:model-value="toggleDhcp" />
+          <Switch
+            :model-value="dhcp.running"
+            :disabled="dhcpBusy !== ''"
+            @update:model-value="toggleDhcp"
+          />
         </div>
       </div>
 
