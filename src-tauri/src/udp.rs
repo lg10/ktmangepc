@@ -31,8 +31,9 @@ const HEART_TICK_SECS: u64 = 5;
 const STALE_SECS: u64 = 10;
 const REMOVE_COUNT: u32 = 5;
 const MAX_LOCK_PACKETS: usize = 500;
-/// 链路故障转移：锁定链路静默超过该时长（两个发现周期）且其他链路有应答时切换
-const FAILOVER_SILENT_SECS: u64 = 6;
+/// 链路故障转移：锁定链路静默超过该时长且其他链路有应答时切换；
+/// 取 15 秒（多个发现周期）容纳多网卡扫描时设备应答的时序抖动，避免链路间来回反复切换
+const FAILOVER_SILENT_SECS: u64 = 15;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
