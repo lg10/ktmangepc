@@ -12,9 +12,21 @@ import { Card } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from "@/components/ui/select";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
-import { Loader2 } from "lucide-vue-next";
-import type { DhcpLease, DhcpStatus } from "@/types";
+import { Loader2, RefreshCw } from "lucide-vue-next";
+import type { DhcpLease, DhcpStatus, NetInterface } from "@/types";
 
 const deviceStore = useDeviceStore();
 const { toast } = useToast();
@@ -48,6 +60,33 @@ let unlisten: UnlistenFn | null = null;
 /** 确认弹窗：真实网络风险（手动启动 DHCP 时检测到非离线环境） */
 const confirmRealNetwork = ref(false);
 const realNetworkMsg = ref("");
+
+/** DHCP 网卡选择：独立于首页工作网卡（selectedNic），两者互不影响 */
+const confirmNic = ref(false);
+const nicList = ref<NetInterface[]>([]);
+const dhcpNic = ref("");
+const nicLoading = ref(false);
+
+async function reloadNics() {
+  nicLoading.value = true;
+  try {
+    nicList.value = await api.listInterfaces();
+  } catch {
+    nicList.value = [];
+  } finally {
+    nicLoading.value = false;
+  }
+}
+
+async function openNicDialog() {
+  confirmNic.value = true;
+  await reloadNics();
+  // 默认选中：正在运行的网卡 > 第一块 Up 网卡
+  dhcpNic.value =
+    (dhcp.value.running ? dhcp.value.interfaceName : "") ||
+    nicList.value.find((n) => n.up)?.name ||
+    "";
+}
 
 onMounted(async () => {
   try {
@@ -87,16 +126,33 @@ async function loadLeases() {
 }
 
 async function toggleDhcp(v: boolean) {
+  if (v) {
+    // 启动前先选网卡（独立于首页工作网卡），取消则保持停止状态
+    await openNicDialog();
+    return;
+  }
   try {
-    if (v) {
-      await doStartDhcp(false);
-    } else {
-      await api.stopDhcp();
-      toast({ title: "DHCP 服务已停止" });
-    }
+    await api.stopDhcp();
+    toast({ title: "DHCP 服务已停止" });
     await refresh();
   } catch (e) {
-    dhcp.value.running = false;
+    toast({
+      title: "DHCP 停止失败",
+      description: String(e),
+      variant: "destructive",
+    });
+  }
+}
+
+/** 网卡对话框确认：用所选网卡启动 DHCP */
+async function confirmNicSelected() {
+  if (!dhcpNic.value) {
+    toast({ title: "请先选择网卡", variant: "destructive" });
+    return;
+  }
+  try {
+    await doStartDhcp(false);
+  } catch (e) {
     toast({
       title: "DHCP 启动失败",
       description: String(e),
@@ -108,7 +164,7 @@ async function toggleDhcp(v: boolean) {
 /** 启动 DHCP：未提权时后端会弹系统密码框拉起特权助手中继，无需重启应用 */
 async function doStartDhcp(force: boolean) {
   try {
-    await api.startDhcp(deviceStore.selectedNic, dhcpAuto.value, force);
+    await api.startDhcp(dhcpNic.value, dhcpAuto.value, force);
     toast({ title: "DHCP 服务已启动", variant: "success" });
     await refresh();
   } catch (e) {
@@ -245,7 +301,9 @@ async function installUpdate() {
           </div>
         </div>
         <div class="flex items-center gap-3">
-          <Badge v-if="dhcp.running" variant="success">运行中 {{ dhcp.serverIp }}</Badge>
+          <Badge v-if="dhcp.running" variant="success">
+            运行中 {{ dhcp.interfaceName }}（{{ dhcp.serverIp }}）
+          </Badge>
           <Badge v-else variant="secondary">已停止</Badge>
           <Switch :model-value="dhcp.running" @update:model-value="toggleDhcp" />
         </div>
@@ -309,6 +367,49 @@ async function installUpdate() {
       danger
       @confirm="doStartDhcp(true)"
     />
+    <!-- DHCP 网卡选择：独立于首页工作网卡，便于 Wi-Fi 扫描 + 网口 DHCP 并行 -->
+    <Dialog v-model:open="confirmNic">
+      <DialogContent class="max-w-sm" :show-close="false">
+        <div class="space-y-2.5">
+          <DialogTitle class="text-base">选择 DHCP 网卡</DialogTitle>
+          <DialogDescription class="text-sm leading-relaxed">
+            与首页工作网卡相互独立：DHCP 仅作用于这里选择的网卡，首页扫描网卡可随时自由切换。
+          </DialogDescription>
+          <div class="flex items-center gap-2">
+            <Select v-model="dhcpNic">
+              <SelectTrigger placeholder="选择启用 DHCP 的网卡" />
+              <SelectContent>
+                <SelectItem
+                  v-for="nic in nicList"
+                  :key="nic.name + nic.ip"
+                  :value="nic.name"
+                  :disabled="!nic.up"
+                >
+                  {{ nic.name }}（{{
+                    !nic.up ? "已断开" : nic.ip || "未配置 IPv4，开 DHCP 自动配置 134.1"
+                  }}）
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              class="shrink-0"
+              :disabled="nicLoading"
+              @click="reloadNics"
+            >
+              <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': nicLoading }" />
+            </Button>
+          </div>
+          <div class="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" @click="confirmNic = false">取消</Button>
+            <Button size="sm" :disabled="!dhcpNic" @click="confirmNic = false; confirmNicSelected()">
+              启动
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   </div>
   </div>
 </template>
