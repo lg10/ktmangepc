@@ -70,6 +70,11 @@ impl InetShareService {
         self.inner.lock().await.running
     }
 
+    /// 同步版运行状态（窗口关闭拦截用；抢锁失败保守放行关闭）
+    pub fn is_running_sync(&self) -> bool {
+        self.inner.try_lock().map(|i| i.running).unwrap_or(false)
+    }
+
     fn view(inner: &Inner) -> InetShareView {
         InetShareView {
             running: inner.running,
@@ -149,6 +154,12 @@ impl InetShareService {
             }
             e
         })?;
+
+        // 标记文件：被 kill/断电后据此检测残留并恢复
+        crate::nicstate::update(app, |s| {
+            s.inet_src = src.clone();
+            s.inet_dst = dst.clone();
+        });
 
         let hb_cancel = CancellationToken::new();
         let mon_cancel = CancellationToken::new();
@@ -251,6 +262,11 @@ impl InetShareService {
             inner.dst.clear();
             view = Self::view(&inner);
         }
+        // 干净停止：清除标记文件中继部分
+        crate::nicstate::update(app, |s| {
+            s.inet_src.clear();
+            s.inet_dst.clear();
+        });
         let _ = app.emit(events::INET_STATUS, view);
         if !silent {
             emit_log(app, "网络中继已停止，网络配置已恢复".into());
@@ -259,7 +275,7 @@ impl InetShareService {
 
     /// 应用退出清理（同步、尽力而为）：发退出指令并短暂等待助手停止共享。
     /// 即使此路径失败，助手 90 秒看门狗也会兜底恢复原样
-    pub fn exit_cleanup(&self) {
+    pub fn exit_cleanup(&self, app: &AppHandle) {
         let Ok(mut inner) = self.inner.try_lock() else {
             return;
         };
@@ -289,6 +305,11 @@ impl InetShareService {
             let _ = child.kill();
         }
         inner.running = false;
+        // 已发出停止指令，同步清除标记文件中继部分
+        crate::nicstate::update(app, |s| {
+            s.inet_src.clear();
+            s.inet_dst.clear();
+        });
     }
 }
 

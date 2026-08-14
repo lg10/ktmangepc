@@ -69,9 +69,9 @@ const inetDst = ref("");
 const srcNics = computed(() =>
   nicList.value.filter((n) => n.up && n.hasIpv4 && n.name !== inetDst.value)
 );
-/** 目标网口候选：链路已连接且非源网卡（含 USB 转接网口） */
+/** 目标网口候选：除源网卡外全部网口（允许选断开网口，可先选后插网线） */
 const dstNics = computed(() =>
-  nicList.value.filter((n) => n.up && n.name !== inetSrc.value)
+  nicList.value.filter((n) => n.name !== inetSrc.value)
 );
 
 async function toggleInetShare(v: boolean) {
@@ -105,6 +105,22 @@ async function toggleInetShare(v: boolean) {
 /** 确认弹窗：真实网络风险（手动启动 DHCP 时检测到非离线环境） */
 const confirmRealNetwork = ref(false);
 const realNetworkMsg = ref("");
+
+/** 一键恢复网络原状：提权助手清理异常退出残留（共享开关 / 134.1 地址 / 静态模式） */
+const restoring = ref(false);
+async function restoreNet() {
+  if (restoring.value) return;
+  restoring.value = true;
+  try {
+    const msg = await api.restoreNetwork();
+    toast({ title: msg, variant: "success" });
+    deviceStore.loadInterfaces();
+  } catch (e) {
+    toast({ title: "恢复失败", description: String(e), variant: "destructive" });
+  } finally {
+    restoring.value = false;
+  }
+}
 
 /** DHCP 网卡选择：独立于首页工作网卡（selectedNic），两者互不影响 */
 const confirmNic = ref(false);
@@ -173,11 +189,15 @@ async function refresh() {
 }
 
 /** 拉取持久化租约：后端 ARP 存活探测，只展示当前真实在线的分配记录 */
+const leasesLoading = ref(false);
 async function loadLeases() {
+  leasesLoading.value = true;
   try {
     leases.value = await api.dhcpLeases();
   } catch {
     /* ignore */
+  } finally {
+    leasesLoading.value = false;
   }
 }
 
@@ -411,8 +431,12 @@ async function installUpdate() {
               </tr>
             </tbody>
           </table>
-          <div v-if="leaseList.length === 0" class="text-xs text-muted-foreground py-2">
-            暂无租约
+          <div
+            v-if="leaseList.length === 0"
+            class="text-xs text-muted-foreground py-2 flex items-center gap-1.5"
+          >
+            <Loader2 v-if="leasesLoading" class="h-3 w-3 animate-spin" />
+            {{ leasesLoading ? "正在探测设备在线状态，自动加载中…" : "暂无租约" }}
           </div>
         </div>
       </template>
@@ -474,7 +498,11 @@ async function installUpdate() {
                   :key="nic.name + nic.ip"
                   :value="nic.name"
                 >
-                  {{ nic.name }}（{{ nic.ip || "未配置 IPv4，共享后由系统自动配置" }}）
+                  {{ nic.name }}（{{
+                    !nic.up
+                      ? "已断开，可先选择后连接网线"
+                      : nic.ip || "未配置 IPv4，共享后由系统自动配置"
+                  }}）
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -484,6 +512,33 @@ async function installUpdate() {
           内置 DHCP 正在运行，与网络中继互斥，请先停止 DHCP 再开启
         </div>
       </template>
+    </Card>
+
+    <!-- 网络恢复：异常退出残留的一键清理入口 -->
+    <Card class="p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium text-sm">网络恢复</div>
+          <div class="text-xs text-muted-foreground mt-1">
+            程序被强制关闭或异常关机后，若残留了共享开关或 192.168.134.1 地址，可一键恢复原状
+          </div>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="restoring || dhcp.running || inetShare.running"
+          @click="restoreNet"
+        >
+          <Loader2 v-if="restoring" class="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          {{ restoring ? "恢复中…" : "恢复网络原状" }}
+        </Button>
+      </div>
+      <div
+        v-if="dhcp.running || inetShare.running"
+        class="text-xs text-muted-foreground mt-2"
+      >
+        DHCP / 中继运行中无需恢复，停止时会自动还原网卡
+      </div>
     </Card>
 
     <!-- 运行日志 -->
@@ -514,7 +569,7 @@ async function installUpdate() {
     />
     <!-- DHCP 网卡选择：独立于首页工作网卡，便于 Wi-Fi 扫描 + 网口 DHCP 并行 -->
     <Dialog v-model:open="confirmNic">
-      <DialogContent class="max-w-sm" :show-close="false">
+      <DialogContent class="max-w-md" :show-close="false">
         <div class="space-y-2.5">
           <DialogTitle class="text-base">选择 DHCP 网卡</DialogTitle>
           <DialogDescription class="text-sm leading-relaxed">

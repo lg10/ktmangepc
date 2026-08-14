@@ -28,7 +28,7 @@ fn now_secs() -> u64 {
 /// 网卡名内嵌脚本后以 -EncodedCommand（UTF-16LE base64）传递，
 /// 彻底规避中文/空格/引号的转义问题
 #[cfg(windows)]
-fn win_powershell(action: &str, src: &str, dst: &str) -> Result<(), String> {
+pub(crate) fn win_powershell(action: &str, src: &str, dst: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     // 单引号字面量转义（名称中含单引号的概率极低，双写已足够）
@@ -176,7 +176,7 @@ fn mac_apply(src: &str, dst: &str) -> Result<(), String> {
 
 /// macOS：停止互联网共享并把 Enabled 置 0（不删除配置，用户 GUI 历史配置仅置位）
 #[cfg(target_os = "macos")]
-fn mac_stop() {
+pub(crate) fn mac_stop() {
     let _ = std::process::Command::new("launchctl")
         .args(["bootout", "system/com.apple.InternetSharing"])
         .output();

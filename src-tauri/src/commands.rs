@@ -5,6 +5,12 @@ use serde::Serialize;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
+/// 不等待网络恢复直接退出（残留由下次启动的检测/恢复功能或助手看门狗处理）
+#[tauri::command]
+pub fn quit_now(app: AppHandle) {
+    app.exit(0);
+}
+
 /// 更新清单地址：发版后上传 JSON（{ version, notes, url }）即可生效
 const UPDATE_MANIFEST_URL: &str = "https://mange.kingint.com/app/kt-mange-pc/latest.json";
 

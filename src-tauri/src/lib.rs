@@ -13,7 +13,9 @@ pub mod hotel;
 pub mod inetshare;
 pub mod inetshare_helper;
 pub mod netif;
+pub mod nicstate;
 pub mod protocol;
+pub mod restore;
 pub mod state;
 pub mod telnet;
 pub mod udp;
@@ -21,11 +23,11 @@ pub mod upgrade;
 
 use state::AppState;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
@@ -76,6 +78,7 @@ pub fn run() {
             commands::check_environment,
             commands::check_update,
             commands::open_url,
+            commands::quit_now,
             // 网卡
             netif::list_network_interfaces,
             // 登录
@@ -104,6 +107,8 @@ pub fn run() {
             inetshare::start_inet_share,
             inetshare::stop_inet_share,
             inetshare::get_inet_share_status,
+            restore::check_nic_residue,
+            restore::restore_network,
             // 文件库
             filestore::fetch_file,
             filestore::list_files,
@@ -126,14 +131,26 @@ pub fn run() {
             telnet::telnet_close,
             telnet::telnet_list,
         ])
-        .build(tauri::generate_context!())
-        .expect("应用启动失败")
-        .run(|app_handle, event| {
-            // 退出清理：停止内置 DHCP 与网络中继，恢复网卡/共享原样
-            if let tauri::RunEvent::Exit = event {
-                let state = app_handle.state::<AppState>();
-                state.inetshare.exit_cleanup();
-                state.dhcp.exit_cleanup();
+        .on_window_event(|window, event| {
+            // DHCP/中继运行中拦截关窗：前端弹「正在恢复」等待弹窗，
+            // 恢复完成后由前端销毁窗口；「直接退出」走 quit_now
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let state = app.state::<AppState>();
+                if state.dhcp.is_running_sync() || state.inetshare.is_running_sync() {
+                    api.prevent_close();
+                    let _ = window.emit(events::EXIT_BLOCKED, ());
+                }
             }
-        });
+        })
+        .build(tauri::generate_context!())
+        .expect("应用启动失败");
+    app.run(|app_handle, event| {
+        // 退出清理：停止内置 DHCP 与网络中继，恢复网卡/共享原样
+        if let tauri::RunEvent::Exit = event {
+            let state = app_handle.state::<AppState>();
+            state.inetshare.exit_cleanup(app_handle);
+            state.dhcp.exit_cleanup(app_handle);
+        }
+    });
 }

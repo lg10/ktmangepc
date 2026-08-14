@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useUiStore } from "@/stores/ui";
 import { useTaskStore } from "@/stores/task";
 import { useHotelStore } from "@/stores/hotel";
+import { api, EVENTS } from "@/lib/api";
+import { restoreNetwork } from "@/lib/exitGuard";
+import { useToast } from "@/components/ui/toast/use-toast";
 import TitleBar from "@/components/layout/TitleBar.vue";
 import SideNav from "@/components/layout/SideNav.vue";
 import StatusBar from "@/components/layout/StatusBar.vue";
 import Dock from "@/components/layout/Dock.vue";
 import CommandPalette from "@/components/layout/CommandPalette.vue";
 import WelcomeGreeting from "@/components/layout/WelcomeGreeting.vue";
+import ExitGuardDialog from "@/components/ExitGuardDialog.vue";
+import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import FilesView from "@/views/FilesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
@@ -16,6 +23,12 @@ import SettingsView from "@/views/SettingsView.vue";
 const uiStore = useUiStore();
 const taskStore = useTaskStore();
 const hotelStore = useHotelStore();
+const { toast } = useToast();
+
+/** 启动残留检测：被 kill / 强制关机后可能残留共享开关与 134.1 地址，弹窗询问是否恢复 */
+const residueOpen = ref(false);
+const residueDetail = ref("");
+let unlistenExit: UnlistenFn | null = null;
 
 /** 响应式：窗口压缩时侧栏自动折叠为纯图标条，放宽后恢复 */
 const autoCollapsed = ref(false);
@@ -57,11 +70,46 @@ onMounted(() => {
       .then(() => hotelStore.fetchAuthInfo())
       .catch(() => {});
   }
+
+  // 退出拦截：关窗时 DHCP / 中继仍在运行，后端拦下关闭并发事件，先恢复再销毁窗口
+  listen(EVENTS.EXIT_BLOCKED, () => {
+    restoreNetwork(() => getCurrentWindow().destroy());
+  }).then((u) => (unlistenExit = u));
+
+  // 启动残留检测（每个会话只提示一次）：上次异常退出可能遗留网络配置
+  if (!sessionStorage.getItem("kt.residueChecked")) {
+    sessionStorage.setItem("kt.residueChecked", "1");
+    api
+      .checkNicResidue()
+      .then((r) => {
+        if (!r.markerFound && !r.sharingEnabled && r.residualNics.length === 0) return;
+        const parts: string[] = [];
+        if (r.markerFound) parts.push("上次运行未正常退出");
+        if (r.sharingEnabled) parts.push("系统互联网共享仍处于开启");
+        if (r.residualNics.length) {
+          parts.push(`网卡 ${r.residualNics.join("、")} 残留 192.168.134.1 地址`);
+        }
+        residueDetail.value = parts.join("；") + "，建议立即恢复以免影响上网。";
+        residueOpen.value = true;
+      })
+      .catch(() => {});
+  }
 });
+
+/** 立即恢复残留（提权助手清理，需系统管理员授权） */
+async function restoreResidue() {
+  try {
+    const msg = await api.restoreNetwork();
+    toast({ title: msg, variant: "success" });
+  } catch (e) {
+    toast({ title: "恢复失败", description: String(e), variant: "destructive" });
+  }
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", onResize);
   window.removeEventListener("keydown", onKeydown);
+  unlistenExit?.();
 });
 </script>
 
@@ -85,6 +133,19 @@ onBeforeUnmount(() => {
 
     <StatusBar />
     <CommandPalette />
+
+    <!-- 退出 / 退出登录等待弹窗：DHCP / 中继恢复完成后才放行 -->
+    <ExitGuardDialog />
+
+    <!-- 启动残留检测：上次异常退出的网络配置残留，询问是否恢复 -->
+    <ConfirmDialog
+      v-model:open="residueOpen"
+      title="检测到网络配置残留"
+      :description="residueDetail"
+      confirm-text="立即恢复"
+      cancel-text="暂不"
+      @confirm="restoreResidue"
+    />
 
     <!-- 文件库 / 设置：弹窗形式，不切路由，避免打断正在进行的设备扫描 -->
     <Dialog :open="uiStore.filesOpen" @update:open="uiStore.filesOpen = $event">

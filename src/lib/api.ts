@@ -13,6 +13,7 @@ import type {
   NetInterface,
   NetworkConfig,
   RcuDevice,
+  ResidueReport,
   RunMode,
   ServerStatus,
   TelnetSession,
@@ -35,6 +36,7 @@ export const EVENTS = {
   DHCP_STATUS: "dhcp://status",
   DHCP_LEASE: "dhcp://lease",
   INET_STATUS: "inet://status",
+  EXIT_BLOCKED: "app://exit-blocked",
   FILE_FETCH_PROGRESS: "file://fetch-progress",
   TASK_UPDATE: "task://update",
   TELNET_DATA: "telnet://data",
@@ -112,6 +114,13 @@ export const api = {
     invoke<void>("start_inet_share", { src, dst }),
   stopInetShare: () => invoke<void>("stop_inet_share"),
   inetShareStatus: () => invoke<InetShareStatus>("get_inet_share_status"),
+
+  /** 网卡残留检测与恢复：被 kill / 强制关机后残留的共享开关与 134.1 地址，
+   * 恢复由提权助手 --nic-restore 执行（需系统管理员授权） */
+  checkNicResidue: () => invoke<ResidueReport>("check_nic_residue"),
+  restoreNetwork: () => invoke<string>("restore_network"),
+  /** 跳过恢复直接退出进程（特权助手看门狗会兜底还原） */
+  quitNow: () => invoke<void>("quit_now"),
 
   /** 文件库（云端拉取） */
   fetchFile: (kind: FileKind, url: string) =>

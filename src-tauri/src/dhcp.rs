@@ -539,6 +539,11 @@ impl DhcpService {
                 };
 
                 let cancel = CancellationToken::new();
+                // 标记文件：被 kill/断电后据此检测残留并恢复
+                crate::nicstate::update(&app, |s| {
+                    s.dhcp_iface = interface_name.clone();
+                    s.dhcp_was_dhcp = was_dhcp;
+                });
                 {
                     let mut inner = self.inner.lock().await;
                     inner.running = true;
@@ -591,9 +596,14 @@ impl DhcpService {
         ];
         let child = crate::elevate::spawn_elevated(&exe, &args)?;
         // 等待助手就绪（包含用户输入密码的时间）；取消密码框会尽快报错
-        wait_relay_ready(&relay_sock, child).await.map_err(|_| {
+        let relay_was_dhcp = wait_relay_ready(&relay_sock, child).await.map_err(|_| {
             "未获得管理员授权或 DHCP 助手启动失败，请重试并输入密码".to_string()
         })?;
+        // 标记文件：被 kill/断电后据此检测残留并恢复
+        crate::nicstate::update(app, |s| {
+            s.dhcp_iface = nic.clone();
+            s.dhcp_was_dhcp = relay_was_dhcp;
+        });
 
         let cancel = CancellationToken::new();
         {
@@ -619,9 +629,14 @@ impl DhcpService {
         self.inner.lock().await.running
     }
 
+    /// 同步版运行状态（窗口关闭拦截用；抢锁失败保守放行关闭）
+    pub fn is_running_sync(&self) -> bool {
+        self.inner.try_lock().map(|i| i.running).unwrap_or(false)
+    }
+
     /// 应用退出清理（同步、尽力而为）：直连模式还原网卡地址并停伪互联网，
     /// 中继模式向助手发退出指令（助手会移除网卡地址）；失败时助手 90 秒看门狗兜底
-    pub fn exit_cleanup(&self) {
+    pub fn exit_cleanup(&self, app: &AppHandle) {
         let Ok(mut inner) = self.inner.try_lock() else {
             return;
         };
@@ -643,6 +658,11 @@ impl DhcpService {
             }
         }
         inner.running = false;
+        // 已发出停止/还原指令，同步清除标记文件 DHCP 部分
+        crate::nicstate::update(app, |s| {
+            s.dhcp_iface.clear();
+            s.dhcp_was_dhcp = false;
+        });
     }
 
     async fn stop_inner(&self, app: &AppHandle) {
@@ -682,6 +702,11 @@ impl DhcpService {
         inner.running = false;
         // 租约持久化保留：停止不清空，列表展示的是真实已分配状态而非本次会话
         drop(inner);
+        // 干净停止：清除标记文件中 DHCP 部分（中继字段若也空则整文件删除）
+        crate::nicstate::update(app, |s| {
+            s.dhcp_iface.clear();
+            s.dhcp_was_dhcp = false;
+        });
         self.emit_status(app).await;
     }
 
@@ -746,11 +771,12 @@ fn try_bind_67() -> Result<Arc<UdpSocket>, std::io::Error> {
     ))
 }
 
-/// 等待助手 READY 信号；macOS 上 osascript 取消密码框会提前退出，据此尽快报错
+/// 等待助手 READY 信号，返回助手启动前记录的网卡 DHCP 模式（写标记文件用）；
+/// macOS 上 osascript 取消密码框会提前退出，据此尽快报错
 async fn wait_relay_ready(
     sock: &UdpSocket,
     mut child: Option<std::process::Child>,
-) -> Result<(), ()> {
+) -> Result<bool, ()> {
     let mut buf = vec![0u8; 1600];
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
@@ -765,7 +791,11 @@ async fn wait_relay_ready(
             }
         }
         match tokio::time::timeout(Duration::from_secs(1), sock.recv_from(&mut buf)).await {
-            Ok(Ok((len, _))) if len >= 5 && &buf[..5] == b"READY" => return Ok(()),
+            // READY:<0/1>：末尾为助手配置的网卡原始 DHCP 模式（兼容旧格式纯 READY）
+            Ok(Ok((len, _))) if len >= 5 && &buf[..5] == b"READY" => {
+                let was_dhcp = len >= 7 && &buf[5..7] == b":1";
+                return Ok(len < 7 || was_dhcp);
+            }
             Ok(_) => continue,
             Err(_) => continue,
         }

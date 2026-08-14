@@ -129,6 +129,16 @@ export interface InetShareStatus {
   dst: string;
 }
 
+/** 网卡残留检测报告（被 kill / 强制关机后的异常退出残留） */
+export interface ResidueReport {
+  /** 上次运行未干净退出（状态标记文件残留） */
+  markerFound: boolean;
+  /** 系统互联网共享仍处于开启（Windows ICS / macOS 互联网共享） */
+  sharingEnabled: boolean;
+  /** 仍持有 192.168.134.1 副地址的网卡名 */
+  residualNics: string[];
+}
+
 /** 文件类型：firmware 固件 / config 配置 */
 export type FileKind = "firmware" | "config";
 

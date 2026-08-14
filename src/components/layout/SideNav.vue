@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useDeviceStore } from "@/stores/device";
 import { useUiStore } from "@/stores/ui";
 import { api } from "@/lib/api";
+import { restoreNetwork } from "@/lib/exitGuard";
 import { openLoginWindow } from "@/lib/window";
 import {
   Rocket,
@@ -48,6 +49,20 @@ function isActive(name: string) {
 }
 
 async function logout() {
+  // DHCP / 中继运行中：先弹等待弹窗恢复网络，成功后再继续退出登录流程
+  try {
+    const [d, i] = await Promise.all([api.dhcpStatus(), api.inetShareStatus()]);
+    if (d.running || i.running) {
+      await restoreNetwork(doLogout);
+      return;
+    }
+  } catch {
+    /* 状态查询失败直接继续，后端关窗拦截仍会兜底 */
+  }
+  await doLogout();
+}
+
+async function doLogout() {
   if (deviceStore.status.running) {
     await api.stopUdpServer().catch(() => {});
   }
