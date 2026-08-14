@@ -505,7 +505,17 @@ async fn find_loop(
     segments: Vec<String>,
 ) {
     let packet = find_packet();
-    let bcast: SocketAddr = (Ipv4Addr::new(255, 255, 255, 255), FIND_PORT).into();
+    // 广播目标 = 受限广播 + 网卡所在子网的定向广播：
+    // 定向广播按子网路由出口，确保 DHCP 直连场景必然从 134.1 网卡发出
+    // （Windows/有网时 255.255.255.255 可能走默认路由从外网网卡发出，设备收不到）
+    let mut bcasts: Vec<SocketAddr> = vec![(Ipv4Addr::new(255, 255, 255, 255), FIND_PORT).into()];
+    {
+        let o = local_ip.octets();
+        let directed: SocketAddr = (Ipv4Addr::new(o[0], o[1], o[2], 255), FIND_PORT).into();
+        if directed.ip() != bcasts[0].ip() {
+            bcasts.push(directed);
+        }
+    }
 
     // 超级模式：先并发探测目标网段，向存活主机单播发现报文
     if mode == 2 && !segments.is_empty() {
@@ -543,40 +553,43 @@ async fn find_loop(
         emit_log(&app, format!("超级模式：开始扫描网段 {:?}", segments));
     }
 
-    let mut interval = tokio::time::interval(Duration::from_secs(3));
+    // 前 10 秒每秒一发加快首次发现，之后恢复 3 秒周期；启动后立即发第一包
+    let burst_end = Instant::now() + Duration::from_secs(10);
     loop {
+        for b in &bcasts {
+            let _ = socket.send_to(&packet, *b).await;
+        }
+        // 超级模式追加向已发现的异网段设备单播（对应原 SouceIpList 逻辑）
+        if mode == 2 {
+            let local_oct = local_ip.octets();
+            let targets: Vec<SocketAddr> = {
+                let guard = svc.inner.lock().await;
+                guard
+                    .devices
+                    .values()
+                    .map(|d| d.addr)
+                    .filter(|a| {
+                        if let std::net::IpAddr::V4(v4) = a.ip() {
+                            let o = v4.octets();
+                            !(o[0] == local_oct[0] && o[1] == local_oct[1])
+                        } else {
+                            false
+                        }
+                    })
+                    .map(|mut a| {
+                        a.set_port(FIND_PORT);
+                        a
+                    })
+                    .collect()
+            };
+            for t in targets {
+                let _ = socket.send_to(&packet, t).await;
+            }
+        }
+        let period = if Instant::now() < burst_end { 1 } else { 3 };
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = interval.tick() => {
-                let _ = socket.send_to(&packet, bcast).await;
-                // 超级模式追加向已发现的异网段设备单播（对应原 SouceIpList 逻辑）
-                if mode == 2 {
-                    let local_oct = local_ip.octets();
-                    let targets: Vec<SocketAddr> = {
-                        let guard = svc.inner.lock().await;
-                        guard
-                            .devices
-                            .values()
-                            .map(|d| d.addr)
-                            .filter(|a| {
-                                if let std::net::IpAddr::V4(v4) = a.ip() {
-                                    let o = v4.octets();
-                                    !(o[0] == local_oct[0] && o[1] == local_oct[1])
-                                } else {
-                                    false
-                                }
-                            })
-                            .map(|mut a| {
-                                a.set_port(FIND_PORT);
-                                a
-                            })
-                            .collect()
-                    };
-                    for t in targets {
-                        let _ = socket.send_to(&packet, t).await;
-                    }
-                }
-            }
+            _ = tokio::time::sleep(Duration::from_secs(period)) => {}
         }
     }
 }
