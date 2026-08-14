@@ -674,6 +674,12 @@ async fn handle_packet(
                 for k in stale {
                     inner.devices.remove(&k);
                 }
+                // 链路固定：同一设备可被多块网卡扫到时，下发链路锁定首次发现的那条，
+                // 避免升级等持续交互过程中源 IP 来回翻转；仅当原链路已不存在
+                // （网卡/IP 变化重建后）才跟随最新应答切换
+                let socket_ips: Vec<Ipv4Addr> =
+                    inner.sockets.iter().map(|(ip, _)| *ip).collect();
+                let prev_via = inner.devices.get(&model.equip_id).and_then(|e| e.via);
                 let entry = inner.devices.entry(model.equip_id.clone()).or_insert_with(|| {
                     DeviceEntry {
                         model: model.clone(),
@@ -684,9 +690,25 @@ async fn handle_packet(
                     }
                 });
                 entry.model = model;
-                entry.addr = src;
-                if local_ip.is_some() {
-                    entry.via = local_ip;
+                match prev_via {
+                    // 首次发现（或原记录无链路信息）：采用当前应答链路
+                    None => {
+                        entry.via = local_ip;
+                        entry.addr = src;
+                    }
+                    Some(v) => {
+                        let alive = socket_ips.is_empty() || socket_ips.contains(&v);
+                        if alive {
+                            // 链路仍有效：仅同链路应答刷新地址，其余网卡应答忽略（防翻转）
+                            if Some(v) == local_ip || socket_ips.is_empty() {
+                                entry.addr = src;
+                            }
+                        } else {
+                            // 链路已消失（网卡重建后）：跟随最新应答
+                            entry.via = local_ip;
+                            entry.addr = src;
+                        }
+                    }
                 }
                 entry.last_seen = Instant::now();
                 entry.offline_count = 0;
