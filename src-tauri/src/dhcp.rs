@@ -277,8 +277,9 @@ fn list_all_iface_names() -> Vec<String> {
             .output()
             .ok()
             .map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
+                // 中文 Windows 的 PowerShell 输出为 GBK 编码，按 UTF-8 解读会乱码
+                let (text, _, _) = encoding_rs::GBK.decode(&o.stdout);
+                text.lines()
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect()
@@ -379,7 +380,9 @@ pub fn nic_dhcp_enabled(name: &str) -> bool {
         .creation_flags(0x0800_0000)
         .output();
     let Ok(o) = out else { return false };
-    let text = String::from_utf8_lossy(&o.stdout).to_ascii_lowercase();
+    // netsh 在中文 Windows 输出 GBK 编码，必须按 GBK 解码，否则「已启用/是」匹配永远失败
+    let (decoded, _, _) = encoding_rs::GBK.decode(&o.stdout);
+    let text = decoded.to_ascii_lowercase();
     // 逐行找「已启用 DHCP」行：中文「是/否」、英文 "Yes/No"
     for line in text.lines() {
         if line.contains("dhcp") && (line.contains("已启用") || line.contains("enabled")) {
@@ -484,11 +487,12 @@ impl DhcpService {
         auto_mode: bool,
         force: bool,
     ) -> Result<(), String> {
-        // 所选网卡链路已断开时提前报错，避免给不存在的链路配地址/误导用户
+        // 所选网卡链路已断开：仅警告不阻断——直连设备场景常需先开 DHCP 再插网线/上电设备
         if !interface_name.is_empty() && !crate::netif::adapter_is_up(&interface_name) {
-            return Err(format!(
-                "网卡 {interface_name} 已断开，请连接好设备网线后重新选择该网卡再开启 DHCP"
-            ));
+            let _ = app.emit(
+                events::UDP_LOG,
+                format!("警告：网卡 {interface_name} 当前为断开状态，已按您的选择启用 DHCP，连接设备网线后即生效"),
+            );
         }
         // 真实网络检测：auto 模式直接拒绝；手动模式给出可确认重试的标记错误（防 rogue DHCP）
         if has_real_network().await {

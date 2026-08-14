@@ -44,8 +44,9 @@ fn adapter_states() -> Option<Vec<(String, bool)>> {
         .output()
         .ok()
         .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
+            // 中文 Windows 的 PowerShell 输出为 GBK 编码，按 UTF-8 解读会使「以太网」等网卡名乱码
+            let (text, _, _) = encoding_rs::GBK.decode(&o.stdout);
+            text.lines()
                 .filter_map(|l| {
                     let (name, up) = l.trim().split_once('|')?;
                     if name.is_empty() {

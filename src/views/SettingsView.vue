@@ -408,10 +408,11 @@ async function installUpdate() {
                   v-for="nic in nicList"
                   :key="nic.name + nic.ip"
                   :value="nic.name"
-                  :disabled="!nic.up"
                 >
                   {{ nic.name }}（{{
-                    !nic.up ? "已断开" : nic.ip || "未配置 IPv4，开 DHCP 自动配置 134.1"
+                    !nic.up
+                      ? "已断开，可先启用 DHCP 再连接设备"
+                      : nic.ip || "未配置 IPv4，开 DHCP 自动配置 134.1"
                   }}）
                 </SelectItem>
               </SelectContent>
