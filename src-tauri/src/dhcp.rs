@@ -8,7 +8,7 @@
 //! - 事件：dhcp://status、dhcp://lease
 
 use crate::events;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -43,7 +43,7 @@ pub struct DhcpStatusView {
     pub auto_mode: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DhcpLeaseView {
     pub mac: String,
@@ -51,11 +51,16 @@ pub struct DhcpLeaseView {
     pub ts: u64,
 }
 
+/// 租约有效期（与 option 51 的 24h 一致）；超过的持久记录在加载时移除
+const LEASE_TTL_MS: u64 = 24 * 3600 * 1000;
+
 struct DhcpInner {
     running: bool,
     interface_name: String,
     auto_mode: bool,
     leases: HashMap<String, DhcpLeaseView>,
+    /// 是否已从磁盘加载持久化租约（进程内只加载一次）
+    loaded: bool,
     cancel: Option<CancellationToken>,
     /// 启动时由程序自动添加的 192.168.134.1 网卡地址（直连模式下停止时移除还原；
     /// 中继模式由助手进程自行还原）
@@ -71,6 +76,7 @@ impl Default for DhcpInner {
             interface_name: String::new(),
             auto_mode: false,
             leases: HashMap::new(),
+            loaded: false,
             cancel: None,
             nic_ip_added: None,
             relay_socket: None,
@@ -441,6 +447,8 @@ impl DhcpService {
         }
 
         self.stop_inner(&app).await;
+        // 恢复持久化租约：重启后同一设备仍拿回同一 IP，列表展示真实分配状态
+        self.ensure_loaded(&app).await;
 
         // 按进程权限选模式：新版 macOS/Windows 不限制特权端口，
         // 未提权时一律走中继模式（GUI 不提权，特权助手处理绑 67 与配网卡）
@@ -467,7 +475,6 @@ impl DhcpService {
                     inner.running = true;
                     inner.interface_name = interface_name.clone();
                     inner.auto_mode = auto_mode;
-                    inner.leases.clear();
                     inner.cancel = Some(cancel.clone());
                 }
                 self.emit_status(&app).await;
@@ -518,7 +525,6 @@ impl DhcpService {
             inner.running = true;
             inner.interface_name = nic;
             inner.auto_mode = auto_mode;
-            inner.leases.clear();
             inner.cancel = Some(cancel.clone());
             inner.relay_socket = Some(relay_sock.clone());
         }
@@ -565,12 +571,13 @@ impl DhcpService {
             c.cancel();
         }
         inner.running = false;
-        inner.leases.clear();
+        // 租约持久化保留：停止不清空，列表展示的是真实已分配状态而非本次会话
         drop(inner);
         self.emit_status(app).await;
     }
 
-    pub async fn status(&self) -> DhcpStatusView {
+    pub async fn status(&self, app: &AppHandle) -> DhcpStatusView {
+        self.ensure_loaded(app).await;
         let inner = self.inner.lock().await;
         DhcpStatusView {
             running: inner.running,
@@ -582,7 +589,37 @@ impl DhcpService {
     }
 
     async fn emit_status(&self, app: &AppHandle) {
-        let _ = app.emit(events::DHCP_STATUS, self.status().await);
+        let _ = app.emit(events::DHCP_STATUS, self.status(app).await);
+    }
+
+    /// 从磁盘加载持久化租约（进程内只加载一次）；
+    /// 租约跨停止/重启保留，同一设备再次请求时拿回同一 IP
+    async fn ensure_loaded(&self, app: &AppHandle) {
+        let mut inner = self.inner.lock().await;
+        if inner.loaded {
+            return;
+        }
+        inner.loaded = true;
+        if inner.leases.is_empty() {
+            inner.leases = load_leases_from_disk(app);
+        }
+    }
+
+    /// 查询租约：只返回当前真实在线的（ARP 存活探测），断开的设备不展示
+    pub async fn leases(&self, app: &AppHandle) -> Vec<DhcpLeaseView> {
+        self.ensure_loaded(app).await;
+        let all: Vec<DhcpLeaseView> = self.inner.lock().await.leases.values().cloned().collect();
+        if all.is_empty() {
+            return Vec::new();
+        }
+        let table = arp_probe(&all).await;
+        let mut out: Vec<DhcpLeaseView> = all
+            .into_iter()
+            // ARP 表中存在该 IP 且 MAC 一致才视为在线
+            .filter(|l| table.get(&l.ip).is_some_and(|m| m == &l.mac))
+            .collect();
+        out.sort_by(|a, b| a.ip.cmp(&b.ip));
+        out
     }
 }
 
@@ -695,9 +732,11 @@ async fn process_bootp(
             ts: now_ms(),
         };
         inner.leases.insert(mac_str.clone(), lease.clone());
+        let snapshot = inner.leases.clone();
         drop(inner);
+        save_leases_to_disk(app, &snapshot);
         let _ = app.emit(events::DHCP_LEASE, lease);
-        let _ = app.emit(events::DHCP_STATUS, svc.status().await);
+        let _ = app.emit(events::DHCP_STATUS, svc.status(app).await);
     }
     Some((ip, mac, xid, reply_type))
 }
@@ -760,6 +799,116 @@ async fn serve_loop_relay(
     }
 }
 
+/// 租约持久化文件：记录历史分配，重启后同一设备拿回同一 IP
+fn leases_file(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|p| p.join("dhcp_leases.json"))
+}
+
+/// 从磁盘加载租约，丢弃超过 24h 有效期的记录
+fn load_leases_from_disk(app: &AppHandle) -> HashMap<String, DhcpLeaseView> {
+    let Some(file) = leases_file(app) else {
+        return HashMap::new();
+    };
+    let Ok(content) = std::fs::read_to_string(&file) else {
+        return HashMap::new();
+    };
+    let Ok(list) = serde_json::from_str::<Vec<DhcpLeaseView>>(&content) else {
+        return HashMap::new();
+    };
+    let now = now_ms();
+    list.into_iter()
+        .filter(|l| now.saturating_sub(l.ts) < LEASE_TTL_MS)
+        .map(|l| (l.mac.clone(), l))
+        .collect()
+}
+
+fn save_leases_to_disk(app: &AppHandle, leases: &HashMap<String, DhcpLeaseView>) {
+    let Some(file) = leases_file(app) else { return };
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let list: Vec<&DhcpLeaseView> = leases.values().collect();
+    if let Ok(json) = serde_json::to_string(&list) {
+        let _ = std::fs::write(&file, json);
+    }
+}
+
+/// ARP 存活探测：先向每个租约 IP 发一个 UDP 触发 ARP 解析，再读系统 ARP 表；
+/// 返回 IP -> MAC（大写无分隔符十六进制），不在表中的设备视为已断开
+async fn arp_probe(leases: &[DhcpLeaseView]) -> HashMap<String, String> {
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0").await {
+        for l in leases {
+            if let Ok(ip) = l.ip.parse::<Ipv4Addr>() {
+                let addr: SocketAddr = (ip, DHCP_CLIENT_PORT).into();
+                let _ = sock.send_to(&[0], addr).await;
+            }
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::task::spawn_blocking(read_arp_table)
+        .await
+        .unwrap_or_default()
+}
+
+/// 读系统 ARP 表（Linux /proc/net/arp；其余平台 arp 命令）
+#[cfg(target_os = "linux")]
+fn read_arp_table() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
+        for line in content.lines().skip(1) {
+            parse_arp_line(line, &mut out);
+        }
+    }
+    out
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_arp_table() -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    // macOS 用 -an（含接口名），Windows 用 -a
+    let arg = if cfg!(target_os = "windows") { "-a" } else { "-an" };
+    if let Ok(o) = std::process::Command::new("arp").arg(arg).output() {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            parse_arp_line(line, &mut out);
+        }
+    }
+    out
+}
+
+/// 解析 ARP 表单行提取 IP 与 MAC；跳过全零（未完成解析）与全 F（广播）条目
+fn parse_arp_line(line: &str, out: &mut HashMap<String, String>) {
+    let mut ip = None;
+    let mut mac = None;
+    for tok in line.split_whitespace() {
+        let t = tok.trim_matches(|c| c == '(' || c == ')');
+        if ip.is_none() {
+            if t.parse::<Ipv4Addr>().is_ok() {
+                ip = Some(t.to_string());
+            }
+            continue;
+        }
+        if mac.is_none() && is_mac_token(t) {
+            mac = Some(t.replace([':', '-'], "").to_uppercase());
+        }
+    }
+    if let (Some(ip), Some(mac)) = (ip, mac) {
+        if mac != "000000000000" && mac != "FFFFFFFFFFFF" {
+            out.insert(ip, mac);
+        }
+    }
+}
+
+fn is_mac_token(t: &str) -> bool {
+    let sep = t.chars().filter(|&c| c == ':' || c == '-').count();
+    t.len() == 17
+        && sep == 5
+        && t.chars()
+            .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '-')
+}
+
 #[tauri::command]
 pub async fn start_dhcp(
     app: AppHandle,
@@ -785,7 +934,47 @@ pub async fn stop_dhcp(
 
 #[tauri::command]
 pub async fn get_dhcp_status(
+    app: AppHandle,
     state: State<'_, crate::state::AppState>,
 ) -> Result<DhcpStatusView, String> {
-    Ok(state.dhcp.status().await)
+    Ok(state.dhcp.status(&app).await)
+}
+
+/// 查询当前真实在线的租约列表（ARP 存活过滤，断开的设备不返回）
+#[tauri::command]
+pub async fn get_dhcp_leases(
+    app: AppHandle,
+    state: State<'_, crate::state::AppState>,
+) -> Result<Vec<DhcpLeaseView>, String> {
+    Ok(state.dhcp.leases(&app).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_arp_line_macos() {
+        let mut out = HashMap::new();
+        parse_arp_line(
+            "? (192.168.134.100) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]",
+            &mut out,
+        );
+        assert_eq!(out.get("192.168.134.100").map(String::as_str), Some("AABBCCDDEEFF"));
+    }
+
+    #[test]
+    fn parse_arp_line_windows_dash_sep() {
+        let mut out = HashMap::new();
+        parse_arp_line("  192.168.134.101          11-22-33-44-55-66     dynamic", &mut out);
+        assert_eq!(out.get("192.168.134.101").map(String::as_str), Some("112233445566"));
+    }
+
+    #[test]
+    fn parse_arp_line_skips_incomplete_and_broadcast() {
+        let mut out = HashMap::new();
+        parse_arp_line("  192.168.134.102          00-00-00-00-00-00     invalid", &mut out);
+        parse_arp_line("  255.255.255.255          ff-ff-ff-ff-ff-ff     static", &mut out);
+        assert!(out.is_empty());
+    }
 }

@@ -96,6 +96,7 @@ pub fn run() {
             dhcp::start_dhcp,
             dhcp::stop_dhcp,
             dhcp::get_dhcp_status,
+            dhcp::get_dhcp_leases,
             // 文件库
             filestore::fetch_file,
             filestore::list_files,

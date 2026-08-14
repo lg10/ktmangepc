@@ -57,8 +57,10 @@ onMounted(async () => {
   }
   await refresh();
   unlisten = await listen<DhcpLease>(EVENTS.DHCP_LEASE, (e) => {
+    // 按 MAC 去重：同一设备重复请求只保留一行，避免刷屏
+    const i = leases.value.findIndex((l) => l.mac === e.payload.mac);
+    if (i >= 0) leases.value.splice(i, 1);
     leases.value.push(e.payload);
-    if (leases.value.length > 100) leases.value.shift();
   });
 });
 
@@ -69,6 +71,16 @@ onUnmounted(() => {
 async function refresh() {
   try {
     dhcp.value = await api.dhcpStatus();
+  } catch {
+    /* ignore */
+  }
+  await loadLeases();
+}
+
+/** 拉取持久化租约：后端 ARP 存活探测，只展示当前真实在线的分配记录 */
+async function loadLeases() {
+  try {
+    leases.value = await api.dhcpLeases();
   } catch {
     /* ignore */
   }

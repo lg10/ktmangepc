@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AuthInfo,
+  DhcpLease,
   DhcpStatus,
   EnvReport,
   FileEntry,
@@ -101,6 +102,7 @@ export const api = {
     invoke<void>("start_dhcp", { interfaceName, autoMode, force }),
   stopDhcp: () => invoke<void>("stop_dhcp"),
   dhcpStatus: () => invoke<DhcpStatus>("get_dhcp_status"),
+  dhcpLeases: () => invoke<DhcpLease[]>("get_dhcp_leases"),
 
   /** 文件库（云端拉取） */
   fetchFile: (kind: FileKind, url: string) =>
