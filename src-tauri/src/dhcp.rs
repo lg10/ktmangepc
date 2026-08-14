@@ -69,6 +69,8 @@ struct DhcpInner {
     nic_was_dhcp: bool,
     /// 中继模式：主程序回环 socket（停止时向助手发退出指令）
     relay_socket: Option<Arc<UdpSocket>>,
+    /// 伪互联网服务（DNS/HTTP 模拟，直连模式随服务启停；中继模式由助手进程自带）
+    fake: Option<crate::fakeinet::FakeInternet>,
 }
 
 impl Default for DhcpInner {
@@ -83,6 +85,7 @@ impl Default for DhcpInner {
             nic_ip_added: None,
             nic_was_dhcp: false,
             relay_socket: None,
+            fake: None,
         }
     }
 }
@@ -538,6 +541,13 @@ impl DhcpService {
                     inner.interface_name = interface_name.clone();
                     inner.auto_mode = auto_mode;
                     inner.cancel = Some(cancel.clone());
+                    // 直连模式（进程已特权）：启动伪互联网加速设备联网自检
+                    inner.fake = Some(crate::fakeinet::FakeInternet::start({
+                        let app2 = app.clone();
+                        move |m| {
+                            let _ = app2.emit(events::UDP_LOG, m);
+                        }
+                    }));
                 }
                 self.emit_status(&app).await;
 
@@ -603,6 +613,8 @@ impl DhcpService {
 
     async fn stop_inner(&self, app: &AppHandle) {
         let mut inner = self.inner.lock().await;
+        // 停止伪互联网服务（drop 即停线程）
+        inner.fake.take();
         // 移除启动时自动添加的网卡地址（仅直连模式；中继模式由助手自行还原）
         if let Some(nic) = inner.nic_ip_added.take() {
             remove_subnet_ip(&nic, inner.nic_was_dhcp);

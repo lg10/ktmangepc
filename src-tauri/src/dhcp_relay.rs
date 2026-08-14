@@ -116,6 +116,9 @@ pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
     let app_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, app_port));
     // 就绪信号（主程序据此确认提权成功且端口就绪）
     let _ = hs.send_to(b"READY", app_addr);
+    // 伪互联网服务（DNS/HTTP 模拟）：助手以特权运行可绑 53/80，
+    // 让设备联网自检快速通过，缩短 DHCP 模式下发现等待；进程退出时自动停止
+    let _fake = crate::fakeinet::FakeInternet::start(|m| eprintln!("[dhcp-relay] {m}"));
 
     let done = Arc::new(AtomicBool::new(false));
     let last_seen = Arc::new(AtomicU64::new(now_secs()));

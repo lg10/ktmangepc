@@ -6,6 +6,7 @@ pub mod db;
 pub mod dhcp;
 pub mod dhcp_relay;
 pub mod elevate;
+pub mod fakeinet;
 pub mod events;
 pub mod filestore;
 pub mod hotel;
