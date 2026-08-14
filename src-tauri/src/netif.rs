@@ -200,8 +200,15 @@ pub async fn list_network_interfaces() -> Result<Vec<NetInterfaceView>, String> 
 }
 
 /// 全局扫描可用地址：所有非环回、非 APIPA 的 IPv4，按名称过滤隧道/虚拟网卡，
-/// 避免向 VPN 网段白发广播
+/// 避免向 VPN 网段白发广播。
+/// 过滤表按平台区分：Linux 上 br0 常是物理网桥不能排除，但需排除 Docker 的 br-*
+/// 与 libvirt 的 virbr*；macOS 的虚拟桥接口叫 bridge100 等，直接按 bridge 前缀排除
 pub fn usable_scan_addrs() -> Vec<(String, std::net::Ipv4Addr)> {
+    #[cfg(target_os = "linux")]
+    const TUNNEL_PREFIXES: [&str; 10] = [
+        "tun", "tap", "ppp", "wg", "vpn", "veth", "br-", "virbr", "docker", "lo",
+    ];
+    #[cfg(not(target_os = "linux"))]
     const TUNNEL_PREFIXES: [&str; 8] = [
         "tun", "tap", "ppp", "wg", "utun", "vpn", "veth", "bridge",
     ];
