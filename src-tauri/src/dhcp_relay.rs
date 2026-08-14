@@ -9,7 +9,7 @@
 //! - 目标端口 0 = 退出指令（移除自动添加的网卡地址后退出），1 = 心跳
 //! - 主程序心跳丢失超过 90 秒自动退出并还原网卡配置
 
-use crate::dhcp::{ensure_subnet_ip, remove_subnet_ip};
+use crate::dhcp::{ensure_subnet_ip, nic_dhcp_enabled, remove_subnet_ip};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -67,7 +67,9 @@ fn now_secs() -> u64 {
 /// 助手中继主循环；返回进程退出码
 pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
     let mut bind_retry = 0u8;
-    // 1. 网卡 192.168.134.1 配置（助手以特权运行，退出时还原本次新增的地址）
+    // 1. 网卡 192.168.134.1 配置（助手以特权运行，退出时还原本次新增的地址）；
+    // 先记录添加前的 DHCP 模式：Windows 增删辅助地址可能把网卡切成静态，退出时据此恢复
+    let was_dhcp = nic_dhcp_enabled(nic);
     let nic_added = match ensure_subnet_ip(nic) {
         Ok(added) => added,
         Err(e) => {
@@ -77,7 +79,7 @@ pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
     };
     let cleanup = |added: bool, nic: &str| {
         if added {
-            remove_subnet_ip(nic);
+            remove_subnet_ip(nic, was_dhcp);
         }
     };
 

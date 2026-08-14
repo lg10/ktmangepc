@@ -65,6 +65,8 @@ struct DhcpInner {
     /// 启动时由程序自动添加的 192.168.134.1 网卡地址（直连模式下停止时移除还原；
     /// 中继模式由助手进程自行还原）
     nic_ip_added: Option<String>,
+    /// 添加 134.1 前该网卡是否为 DHCP 自动获取（停止时据此恢复，防 Windows 切静态）
+    nic_was_dhcp: bool,
     /// 中继模式：主程序回环 socket（停止时向助手发退出指令）
     relay_socket: Option<Arc<UdpSocket>>,
 }
@@ -79,6 +81,7 @@ impl Default for DhcpInner {
             loaded: false,
             cancel: None,
             nic_ip_added: None,
+            nic_was_dhcp: false,
             relay_socket: None,
         }
     }
@@ -357,10 +360,57 @@ pub fn ensure_subnet_ip(requested: &str) -> Result<bool, String> {
     }
 }
 
-/// 移除启动时自动添加的 192.168.134.1（停止服务时还原现场），失败忽略
-pub fn remove_subnet_ip(name: &str) {
+/// 移除启动时自动添加的 192.168.134.1（停止服务时还原现场）；
+/// was_dhcp = 添加前该网卡是否为 DHCP 自动获取：Windows 上增删辅助地址可能把
+/// DHCP 网卡切成静态模式（表现为 169.254 且无法 renew），移除后校验并恢复
+pub fn remove_subnet_ip(name: &str, was_dhcp: bool) {
     let _ = run_ip_cmd(name, false);
+    if was_dhcp && !nic_dhcp_enabled(name) {
+        restore_nic_dhcp(name);
+    }
 }
+
+/// Windows：查询网卡 IPv4 是否为 DHCP 自动获取；无法判定时保守返回 false（不做恢复）
+#[cfg(windows)]
+pub fn nic_dhcp_enabled(name: &str) -> bool {
+    use std::os::windows::process::CommandExt;
+    let out = std::process::Command::new("netsh")
+        .args(["interface", "ip", "show", "config", &format!("name={name}")])
+        .creation_flags(0x0800_0000)
+        .output();
+    let Ok(o) = out else { return false };
+    let text = String::from_utf8_lossy(&o.stdout).to_ascii_lowercase();
+    // 逐行找「已启用 DHCP」行：中文「是/否」、英文 "Yes/No"
+    for line in text.lines() {
+        if line.contains("dhcp") && (line.contains("已启用") || line.contains("enabled")) {
+            return line.contains('是') || line.contains("yes");
+        }
+    }
+    false
+}
+
+#[cfg(not(windows))]
+pub fn nic_dhcp_enabled(_name: &str) -> bool {
+    false
+}
+
+/// Windows：把网卡恢复为 DHCP 自动获取（IP + DNS），失败忽略
+#[cfg(windows)]
+fn restore_nic_dhcp(name: &str) {
+    use std::os::windows::process::CommandExt;
+    for args in [
+        ["interface", "ip", "set", "address", name, "dhcp"],
+        ["interface", "ip", "set", "dnsservers", name, "dhcp"],
+    ] {
+        let _ = std::process::Command::new("netsh")
+            .args(args)
+            .creation_flags(0x0800_0000)
+            .output();
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_nic_dhcp(_name: &str) {}
 
 /// 平台特定的网卡副地址增删：macOS ifconfig alias、Linux ip addr、Windows netsh
 fn run_ip_cmd(name: &str, add: bool) -> Option<std::process::Output> {
@@ -464,11 +514,13 @@ impl DhcpService {
         match try_bind_67() {
             Ok(socket) => {
                 // 为所选网卡自动配置 192.168.134.1（设备回包目标），失败不阻断但给出警告
+                let was_dhcp = nic_dhcp_enabled(&interface_name);
                 let nic_warning = match ensure_subnet_ip(&interface_name) {
                     Ok(added) => {
                         if added {
                             let mut inner = self.inner.lock().await;
                             inner.nic_ip_added = Some(interface_name.clone());
+                            inner.nic_was_dhcp = was_dhcp;
                         }
                         String::new()
                     }
@@ -549,7 +601,8 @@ impl DhcpService {
         let mut inner = self.inner.lock().await;
         // 移除启动时自动添加的网卡地址（仅直连模式；中继模式由助手自行还原）
         if let Some(nic) = inner.nic_ip_added.take() {
-            remove_subnet_ip(&nic);
+            remove_subnet_ip(&nic, inner.nic_was_dhcp);
+            inner.nic_was_dhcp = false;
         }
         // 中继模式：向助手发退出指令（目标端口 0），助手移除网卡地址后退出
         if let Some(sock) = inner.relay_socket.take() {
