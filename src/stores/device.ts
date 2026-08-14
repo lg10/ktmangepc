@@ -11,7 +11,9 @@ import type {
 export const useDeviceStore = defineStore("device", {
   state: () => ({
     interfaces: [] as NetInterface[],
-    selectedIp: "",
+    /** 选中网卡名（按名而非 IP：无 IPv4 的网卡也可选中后开 DHCP） */
+    selectedNic: "",
+    interfacesLoading: false,
     mode: 0 as RunMode | 0,
     segments: [] as string[],
     status: {
@@ -33,9 +35,16 @@ export const useDeviceStore = defineStore("device", {
   },
   actions: {
     async loadInterfaces() {
-      this.interfaces = await api.listInterfaces();
-      if (!this.selectedIp && this.interfaces.length > 0) {
-        this.selectedIp = this.interfaces[0].ip;
+      this.interfacesLoading = true;
+      try {
+        this.interfaces = await api.listInterfaces();
+      } finally {
+        this.interfacesLoading = false;
+      }
+      // 选中项失效（网卡消失/被断开过滤）时重置；默认选第一个链路已连接的
+      const current = this.interfaces.find((i) => i.name === this.selectedNic);
+      if (!current || !current.up) {
+        this.selectedNic = this.interfaces.find((i) => i.up)?.name ?? "";
       }
     },
     upsertDevice(dev: RcuDevice) {

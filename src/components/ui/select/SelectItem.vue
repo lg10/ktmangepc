@@ -3,12 +3,13 @@ import { SelectItem, SelectItemIndicator, SelectItemText } from "reka-ui";
 import { Check } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 
-defineProps<{ value: string; class?: string }>();
+defineProps<{ value: string; class?: string; disabled?: boolean }>();
 </script>
 
 <template>
   <SelectItem
     :value="value"
+    :disabled="disabled"
     :class="
       cn(
         'relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-2 pr-8 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50',

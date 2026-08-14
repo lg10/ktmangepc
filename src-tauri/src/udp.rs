@@ -172,26 +172,29 @@ fn emit_log(app: &AppHandle, msg: String) {
 }
 
 impl UdpService {
-    /// 启动服务，返回实际绑定端口
+    /// 启动服务，返回实际绑定端口；interface_name 为空时由后端智能兜底选择
     pub async fn start(
         &self,
         app: AppHandle,
-        ip: String,
+        interface_name: String,
         mode: u8,
         segments: Vec<String>,
     ) -> Result<u16, String> {
         // 先停掉旧实例
         self.stop_inner(&app).await;
 
-        let (socket, port) = if mode == 4 {
+        let (socket, port, ip) = if mode == 4 {
             // 门锁模式：0.0.0.0:8787
             let (s, p) = bind_socket(Ipv4Addr::UNSPECIFIED, LOCK_PORT, 1)?;
-            (s, p)
+            let display_ip = crate::netif::resolve_nic_ipv4(&interface_name)
+                .map(|v| v.to_string())
+                .unwrap_or_default();
+            (s, p, display_ip)
         } else {
-            let bind_ip: Ipv4Addr = ip
-                .parse()
-                .map_err(|_| format!("网卡 IP 非法: {ip}"))?;
-            bind_socket(bind_ip, BASE_PORT, MAX_ATTEMPTS)?
+            // 按网卡名解析 IPv4：无 IPv4/仅 APIPA 的网卡会报错引导先开 DHCP
+            let bind_ip = crate::netif::resolve_nic_ipv4(&interface_name)?;
+            let (s, p) = bind_socket(bind_ip, BASE_PORT, MAX_ATTEMPTS)?;
+            (s, p, bind_ip.to_string())
         };
         let socket = Arc::new(socket);
         let cancel = CancellationToken::new();
@@ -634,11 +637,11 @@ async fn heart_loop(svc: Arc<UdpService>, app: AppHandle, cancel: CancellationTo
 pub async fn start_udp_server(
     app: AppHandle,
     state: State<'_, crate::state::AppState>,
-    ip: String,
+    interface_name: String,
     mode: u8,
     segments: Vec<String>,
 ) -> Result<u16, String> {
-    state.udp.start(app, ip, mode, segments).await
+    state.udp.start(app, interface_name, mode, segments).await
 }
 
 #[tauri::command]

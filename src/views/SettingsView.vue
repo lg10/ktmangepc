@@ -107,11 +107,8 @@ async function toggleDhcp(v: boolean) {
 
 /** 启动 DHCP：未提权时后端会弹系统密码框拉起特权助手中继，无需重启应用 */
 async function doStartDhcp(force: boolean) {
-  const nic = deviceStore.interfaces.find(
-    (i) => i.ip === deviceStore.selectedIp
-  );
   try {
-    await api.startDhcp(nic?.name ?? "", dhcpAuto.value, force);
+    await api.startDhcp(deviceStore.selectedNic, dhcpAuto.value, force);
     toast({ title: "DHCP 服务已启动", variant: "success" });
     await refresh();
   } catch (e) {

@@ -71,7 +71,7 @@ async function refreshInterfaces() {
 }
 
 async function start() {
-  if (!deviceStore.selectedIp) {
+  if (!deviceStore.selectedNic) {
     toast({ title: "请先选择工作网卡", variant: "destructive" });
     return;
   }
@@ -90,7 +90,7 @@ async function start() {
             .map((s) => s.trim())
             .filter(Boolean)
         : [];
-    await api.startUdpServer(deviceStore.selectedIp, selectedMode.value, segments);
+    await api.startUdpServer(deviceStore.selectedNic, selectedMode.value, segments);
     deviceStore.mode = selectedMode.value;
     // 启动成功即进入设备监控；停止服务后由监控页返回本页
     router.push({ name: "monitor" });
@@ -119,18 +119,31 @@ async function start() {
       <div class="flex items-end gap-3">
         <div class="flex-1 space-y-1.5">
           <Label>{{ t("launch.interface") }}</Label>
-          <Select v-model="deviceStore.selectedIp">
+          <Select v-model="deviceStore.selectedNic">
             <SelectTrigger placeholder="选择用于设备通信的网卡">
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="nic in deviceStore.interfaces" :key="nic.name" :value="nic.ip">
-                {{ nic.name }}（{{ nic.ip }}）
+              <SelectItem
+                v-for="nic in deviceStore.interfaces"
+                :key="nic.name + nic.ip"
+                :value="nic.name"
+                :disabled="!nic.up"
+              >
+                {{ nic.name }}（{{
+                  !nic.up ? "已断开" : nic.ip || "未配置 IPv4，开 DHCP 自动配置 134.1"
+                }}）
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
-        <Button variant="outline" size="icon" class="mb-0.5" @click="refreshInterfaces">
-          <RefreshCw class="h-4 w-4" />
+        <Button
+          variant="outline"
+          size="icon"
+          class="mb-0.5"
+          :disabled="deviceStore.interfacesLoading"
+          @click="refreshInterfaces"
+        >
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': deviceStore.interfacesLoading }" />
         </Button>
       </div>
     </Card>

@@ -63,8 +63,8 @@ export const api = {
   buildLoginCode: (code: string) => invoke<string>("build_login_code", { code }),
 
   /** UDP 服务 */
-  startUdpServer: (ip: string, mode: RunMode, segments: string[]) =>
-    invoke<number>("start_udp_server", { ip, mode, segments }),
+  startUdpServer: (interfaceName: string, mode: RunMode, segments: string[]) =>
+    invoke<number>("start_udp_server", { interfaceName, mode, segments }),
   stopUdpServer: () => invoke<void>("stop_udp_server"),
   getServerStatus: () => invoke<ServerStatus>("get_server_status"),
   listDevices: () => invoke<RcuDevice[]>("list_devices"),

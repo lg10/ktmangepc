@@ -1,8 +1,10 @@
 //! 网卡枚举（对应原 MainWindowViewModel.cs 的接口列表）
 //!
-//! Windows/Linux 的地址枚举会保留「已断开连接」网卡的过期 IP，
-//! 选中它们扫描/开 DHCP 必然失败，因此按链路状态过滤；
-//! 默认选中顺序做智能排序：本服务 192.168.134.x 网卡 > 默认路由出口（能通讯）> 其余
+//! Windows 地址枚举只覆盖有 IPv4 的网卡：设备直连的网口在拿到地址前（APIPA 前/无 DHCP）
+//! 会从列表消失，导致用户只能选到 Wi-Fi，把 134.1 加错网卡、扫描广播走错广播域。
+//! 因此 Windows 按适配器状态全量枚举：Up 但无 IPv4 的显示「未配置 IPv4」，
+//! Disconnected 的置底灰显（前端禁选）；
+//! 默认选中顺序：192.168.134.x > 默认路由出口 > 其余 Up 有 IP > Up 无 IP > Disconnected
 
 use serde::Serialize;
 use std::net::IpAddr;
@@ -14,6 +16,10 @@ pub struct NetInterfaceView {
     pub ip: String,
     pub mac: String,
     pub is_loopback: bool,
+    /// 是否持有 IPv4（false 时 ip 为空，开 DHCP 会自动配置 134.1）
+    pub has_ipv4: bool,
+    /// 链路是否已连接（false = 已断开，前端灰显禁选）
+    pub up: bool,
 }
 
 fn mac_of(name: &str) -> String {
@@ -24,15 +30,15 @@ fn mac_of(name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 链路已连接的网卡名；macOS 断开后不保留 IPv4，无需过滤
+/// Windows 全部物理适配器 (名称, 是否 Up)；macOS/Linux 返回 None 走地址枚举
 #[cfg(target_os = "windows")]
-fn link_up_names() -> Option<Vec<String>> {
+fn adapter_states() -> Option<Vec<(String, bool)>> {
     use std::os::windows::process::CommandExt;
     std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
-            "(Get-NetAdapter | Where-Object Status -eq Up).Name",
+            "Get-NetAdapter | ForEach-Object { \"$($_.Name)|$($_.Status -eq 'Up')\" }",
         ])
         .creation_flags(0x0800_0000)
         .output()
@@ -40,33 +46,15 @@ fn link_up_names() -> Option<Vec<String>> {
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
+                .filter_map(|l| {
+                    let (name, up) = l.trim().split_once('|')?;
+                    if name.is_empty() {
+                        return None;
+                    }
+                    Some((name.to_string(), up == "True"))
+                })
                 .collect()
         })
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn link_up_names() -> Option<Vec<String>> {
-    std::fs::read_dir("/sys/class/net").ok().map(|rd| {
-        rd.filter_map(|e| e.ok())
-            .filter(|e| {
-                // unknown 常见于隧道/虚拟接口，视为可用；仅排除明确 down 的
-                std::fs::read_to_string(e.path().join("operstate"))
-                    .map(|s| {
-                        let s = s.trim();
-                        s == "up" || s == "unknown"
-                    })
-                    .unwrap_or(true)
-            })
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect()
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn link_up_names() -> Option<Vec<String>> {
-    None
 }
 
 /// 默认路由出口 IP（UDP connect 不真正发包）
@@ -76,49 +64,186 @@ fn default_route_ip() -> Option<IpAddr> {
     sock.local_addr().ok().map(|a| a.ip())
 }
 
+/// 指定网卡链路是否已连接（非 Windows 无法可靠判定，恒 true）
+pub fn adapter_is_up(name: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        adapter_states()
+            .map(|v| {
+                v.iter()
+                    .any(|(n, up)| *up && n.eq_ignore_ascii_case(name))
+            })
+            .unwrap_or(true)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = name;
+        true
+    }
+}
+
 #[tauri::command]
 pub async fn list_network_interfaces() -> Result<Vec<NetInterfaceView>, String> {
     let list = local_ip_address::list_afinet_netifas().map_err(|e| e.to_string())?;
-    let up = link_up_names();
     let route_ip = default_route_ip();
-    let mut entries: Vec<(String, std::net::Ipv4Addr)> = Vec::new();
-    for (name, ip) in list {
-        // 仅保留 IPv4，避免前端展示噪声
-        let IpAddr::V4(v4) = ip else { continue };
-        if v4.is_loopback() {
-            continue;
-        }
-        // Windows/Linux 过滤断开连接的网卡（其过期 IP 选中后无法通讯）
-        if let Some(up) = &up {
-            if !up.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
-                continue;
+    let mut entries: Vec<NetInterfaceView> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    let adapters = adapter_states();
+
+    #[cfg(target_os = "windows")]
+    if let Some(adapters) = adapters {
+        for (name, up) in adapters {
+            let ips: Vec<std::net::Ipv4Addr> = list
+                .iter()
+                .filter_map(|(n, ip)| {
+                    if !n.eq_ignore_ascii_case(&name) {
+                        return None;
+                    }
+                    match ip {
+                        IpAddr::V4(v4) if !v4.is_loopback() => Some(*v4),
+                        _ => None,
+                    }
+                })
+                .collect();
+            if ips.is_empty() {
+                // Up 但无 IPv4（如直连设备网口未拿到地址）与 Disconnected 都进列表，
+                // 由前端区分样式（未配置 IPv4 / 已断开灰显）
+                let mac = mac_of(&name);
+                entries.push(NetInterfaceView {
+                    name,
+                    ip: String::new(),
+                    mac,
+                    is_loopback: false,
+                    has_ipv4: false,
+                    up,
+                });
+            } else {
+                for v4 in ips {
+                    entries.push(NetInterfaceView {
+                        name: name.clone(),
+                        ip: v4.to_string(),
+                        mac: mac_of(&name),
+                        is_loopback: false,
+                        has_ipv4: true,
+                        up,
+                    });
+                }
             }
         }
-        entries.push((name, v4));
     }
-    // 智能排序：192.168.134.x（本服务/直连网段）> 默认路由出口（当前能通讯）> 其余；stable 保原序
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let up_names: Option<Vec<String>> =
+            std::fs::read_dir("/sys/class/net").ok().map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| {
+                        // unknown 常见于隧道/虚拟接口，视为可用；仅排除明确 down 的
+                        std::fs::read_to_string(e.path().join("operstate"))
+                            .map(|s| {
+                                let s = s.trim();
+                                s == "up" || s == "unknown"
+                            })
+                            .unwrap_or(true)
+                    })
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            });
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let up_names: Option<Vec<String>> = None;
+
+        for (name, ip) in list {
+            let IpAddr::V4(v4) = ip else { continue };
+            if v4.is_loopback() {
+                continue;
+            }
+            // Linux 过滤断开连接的网卡（其过期 IP 选中后无法通讯）
+            if let Some(up) = &up_names {
+                if !up.iter().any(|n| n == &name) {
+                    continue;
+                }
+            }
+            let mac = mac_of(&name);
+            entries.push(NetInterfaceView {
+                name,
+                ip: v4.to_string(),
+                mac,
+                is_loopback: false,
+                has_ipv4: true,
+                up: true,
+            });
+        }
+    }
+
+    // 智能排序：134 网段 > 默认路由出口 > 其余 Up 有 IP > Up 无 IP > Disconnected
     let route_name = entries
         .iter()
-        .find(|(_, v)| Some(IpAddr::V4(*v)) == route_ip)
-        .map(|(n, _)| n.clone());
-    entries.sort_by_key(|(name, v)| {
-        let o = v.octets();
-        let score = if o[0] == 192 && o[1] == 168 && o[2] == 134 {
+        .find(|e| e.has_ipv4 && Some(e.ip.as_str()) == route_ip.map(|r| r.to_string()).as_deref())
+        .map(|e| e.name.clone());
+    entries.sort_by_key(|e| {
+        let score = if e.has_ipv4 && e.ip.starts_with("192.168.134.") {
+            4
+        } else if e.has_ipv4 && route_name.as_deref() == Some(e.name.as_str()) {
+            3
+        } else if e.has_ipv4 && e.up {
             2
-        } else if route_name.as_deref() == Some(name.as_str()) {
+        } else if e.up {
             1
         } else {
             0
         };
         std::cmp::Reverse(score)
     });
-    Ok(entries
+    Ok(entries)
+}
+
+/// 按网卡名解析其 IPv4（扫描/DHCP 启动用）：
+/// 名字为空时智能兜底（唯一 134 段 > 唯一 Up 有 IP），无 IPv4 时报错引导先开 DHCP
+pub fn resolve_nic_ipv4(name: &str) -> Result<std::net::Ipv4Addr, String> {
+    let list = local_ip_address::list_afinet_netifas().map_err(|e| e.to_string())?;
+    let all: Vec<(String, std::net::Ipv4Addr)> = list
         .into_iter()
-        .map(|(name, v4)| NetInterfaceView {
-            mac: mac_of(&name),
-            ip: v4.to_string(),
-            is_loopback: false,
-            name,
+        .filter_map(|(n, ip)| match ip {
+            IpAddr::V4(v4) if !v4.is_loopback() => Some((n, v4)),
+            _ => None,
         })
-        .collect())
+        .collect();
+
+    if !name.is_empty() {
+        // 优先取非 169.254 的地址（APIPA 不可用于通讯）
+        let mut aipa = None;
+        for (n, v4) in &all {
+            if n.eq_ignore_ascii_case(name) {
+                let o = v4.octets();
+                if o[0] == 169 && o[1] == 254 {
+                    aipa = Some(*v4);
+                } else {
+                    return Ok(*v4);
+                }
+            }
+        }
+        if aipa.is_some() {
+            return Err(format!(
+                "网卡 {name} 当前只有 169.254 自分配地址（网段内无 DHCP 服务器）。请先对该网卡开启 DHCP 配置 192.168.134.1 后再启动扫描"
+            ));
+        }
+        return Err(format!(
+            "网卡 {name} 未配置 IPv4，请先对该网卡开启 DHCP（自动配置 192.168.134.1）后再启动扫描"
+        ));
+    }
+    // 未指定：优先唯一 134 段网卡，其次唯一有 IPv4 的网卡
+    let subnet: Vec<std::net::Ipv4Addr> = all
+        .iter()
+        .filter(|(_, v)| v.octets()[..3] == [192, 168, 134])
+        .map(|(_, v)| *v)
+        .collect();
+    if subnet.len() == 1 {
+        return Ok(subnet[0]);
+    }
+    if all.len() == 1 {
+        return Ok(all[0].1);
+    }
+    Err("请先在顶部网卡选择中选中直连设备的那块网卡".to_string())
 }

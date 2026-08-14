@@ -434,6 +434,12 @@ impl DhcpService {
         auto_mode: bool,
         force: bool,
     ) -> Result<(), String> {
+        // 所选网卡链路已断开时提前报错，避免给不存在的链路配地址/误导用户
+        if !interface_name.is_empty() && !crate::netif::adapter_is_up(&interface_name) {
+            return Err(format!(
+                "网卡 {interface_name} 已断开，请连接好设备网线后重新选择该网卡再开启 DHCP"
+            ));
+        }
         // 真实网络检测：auto 模式直接拒绝；手动模式给出可确认重试的标记错误（防 rogue DHCP）
         if has_real_network().await {
             if auto_mode {
@@ -870,7 +876,15 @@ fn read_arp_table() -> HashMap<String, String> {
     let mut out = HashMap::new();
     // macOS 用 -an（含接口名），Windows 用 -a
     let arg = if cfg!(target_os = "windows") { "-a" } else { "-an" };
-    if let Ok(o) = std::process::Command::new("arp").arg(arg).output() {
+    let mut cmd = std::process::Command::new("arp");
+    cmd.arg(arg);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW：避免每次进设置页执行 arp 时控制台窗口闪现
+        cmd.creation_flags(0x0800_0000);
+    }
+    if let Ok(o) = cmd.output() {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
             parse_arp_line(line, &mut out);
         }

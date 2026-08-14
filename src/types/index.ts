@@ -4,6 +4,10 @@ export interface NetInterface {
   ip: string;
   mac: string;
   isLoopback: boolean;
+  /** 是否持有 IPv4（false 时 ip 为空，开 DHCP 会自动配置 134.1） */
+  hasIpv4: boolean;
+  /** 链路是否已连接（false = 已断开，灰显禁选） */
+  up: boolean;
 }
 
 /** 运行模式：1 普通扫描 2 超级模式 3 DHCP 4 门锁扫描 */
