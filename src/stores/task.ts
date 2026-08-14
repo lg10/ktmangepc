@@ -25,5 +25,9 @@ export const useTaskStore = defineStore("task", {
     async cancel(equipId: string, kind: FileKind) {
       await api.cancelUpdateTask(equipId, kind);
     },
+    /** 清除已完成记录（后端清除后由 task://update 事件同步刷新） */
+    async clearFinished() {
+      await api.clearUpdateTasks();
+    },
   },
 });

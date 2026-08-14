@@ -46,7 +46,7 @@ function clear() {
       </div>
     </div>
     <button
-      class="absolute right-2 top-2 flex items-center gap-1 rounded border bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+      class="absolute right-2 top-1.5 z-10 flex items-center gap-1 rounded border bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
       title="清空日志"
       @click="clear"
     >

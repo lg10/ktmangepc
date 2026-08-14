@@ -105,6 +105,7 @@ pub fn run() {
             upgrade::start_file_update,
             upgrade::list_update_tasks,
             upgrade::cancel_update_task,
+            upgrade::clear_update_tasks,
             // 酒店同步 / 批量授权
             hotel::sync_hotel,
             hotel::search_hotel,

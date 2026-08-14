@@ -359,6 +359,16 @@ impl UpdateService {
         list
     }
 
+    /// 清除已完成记录（等待/进行中的任务不受影响）
+    pub async fn clear_finished(&self, app: &AppHandle) {
+        let mut inner = self.inner.lock().await;
+        if inner.finished.is_empty() {
+            return;
+        }
+        inner.finished.clear();
+        self.emit_tasks(app, &inner);
+    }
+
     /// 取消等待中的任务
     pub async fn cancel_task(&self, app: &AppHandle, equip_id: &str, kind: &str) -> Result<(), String> {
         let kind = match kind {
@@ -441,4 +451,13 @@ pub async fn cancel_update_task(
     kind: String,
 ) -> Result<(), String> {
     state.update.cancel_task(&app, &equip_id, &kind).await
+}
+
+#[tauri::command]
+pub async fn clear_update_tasks(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.update.clear_finished(&app).await;
+    Ok(())
 }

@@ -1,11 +1,15 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useTaskStore } from "@/stores/task";
 import { useToast } from "@/components/ui/toast/use-toast";
 import { Badge } from "@/components/ui/badge";
-import { Cpu, FileCog, X, Inbox } from "lucide-vue-next";
+import { Cpu, FileCog, X, Inbox, Eraser } from "lucide-vue-next";
 
 const taskStore = useTaskStore();
 const { toast } = useToast();
+
+/** 已完成记录数（完成 / 超时 / 重复），仅这部分可清除 */
+const finishedCount = computed(() => taskStore.tasks.filter((t) => t.state > 1).length);
 
 function stateBadge(state: number) {
   if (state <= 1) return { label: state === 0 ? "等待" : "进行", variant: "secondary" as const };
@@ -26,10 +30,27 @@ async function cancel(equipId: string, kind: "firmware" | "config") {
     toast({ title: "取消失败", description: String(e), variant: "destructive" });
   }
 }
+
+async function clearFinished() {
+  try {
+    await taskStore.clearFinished();
+  } catch (e) {
+    toast({ title: "清除失败", description: String(e), variant: "destructive" });
+  }
+}
 </script>
 
 <template>
-  <div class="h-full overflow-auto">
+  <div class="h-full overflow-auto relative">
+    <button
+      v-if="finishedCount"
+      class="absolute right-2 top-1.5 z-20 flex items-center gap-1 rounded border bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+      title="清除已完成 / 超时 / 重复记录（进行中任务不受影响）"
+      @click="clearFinished"
+    >
+      <Eraser class="h-3 w-3" />
+      清空
+    </button>
     <table v-if="taskStore.tasks.length" class="w-full text-xs border-collapse">
       <thead class="sticky top-0 bg-muted/70 backdrop-blur z-10">
         <tr class="text-left text-muted-foreground">

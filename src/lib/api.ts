@@ -118,6 +118,8 @@ export const api = {
   listUpdateTasks: () => invoke<UpdateTask[]>("list_update_tasks"),
   cancelUpdateTask: (equipId: string, kind: FileKind) =>
     invoke<void>("cancel_update_task", { equipId, kind }),
+  /** 清除已完成的升级 / 配置任务记录（进行中任务不受影响） */
+  clearUpdateTasks: () => invoke<void>("clear_update_tasks"),
 
   /** 酒店同步 / 批量基础信息 */
   syncHotel: (hotelId: number) => invoke<number>("sync_hotel", { hotelId }),
