@@ -31,6 +31,8 @@ const HEART_TICK_SECS: u64 = 5;
 const STALE_SECS: u64 = 10;
 const REMOVE_COUNT: u32 = 5;
 const MAX_LOCK_PACKETS: usize = 500;
+/// 链路故障转移：锁定链路静默超过该时长（两个发现周期）且其他链路有应答时切换
+const FAILOVER_SILENT_SECS: u64 = 6;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +58,8 @@ struct DeviceEntry {
     addr: SocketAddr,
     /// 发现该设备的链路本地 IP（全局模式下据此选回对应网卡 socket 下发）
     via: Option<Ipv4Addr>,
+    /// 锁定链路的最后一次应答时间（静默超时且其他链路活跃时触发故障转移）
+    via_last_seen: Instant,
     last_seen: Instant,
     offline_count: u32,
 }
@@ -685,6 +689,7 @@ async fn handle_packet(
                         model: model.clone(),
                         addr: src,
                         via: local_ip,
+                        via_last_seen: Instant::now(),
                         last_seen: Instant::now(),
                         offline_count: 0,
                     }
@@ -695,19 +700,38 @@ async fn handle_packet(
                     None => {
                         entry.via = local_ip;
                         entry.addr = src;
+                        entry.via_last_seen = Instant::now();
                     }
                     Some(v) => {
                         let alive = socket_ips.is_empty() || socket_ips.contains(&v);
-                        if alive {
-                            // 链路仍有效：仅同链路应答刷新地址，其余网卡应答忽略（防翻转）
-                            if Some(v) == local_ip || socket_ips.is_empty() {
-                                entry.addr = src;
-                            }
-                        } else {
+                        if !alive {
                             // 链路已消失（网卡重建后）：跟随最新应答
                             entry.via = local_ip;
                             entry.addr = src;
+                            entry.via_last_seen = Instant::now();
+                        } else if Some(v) == local_ip || socket_ips.is_empty() {
+                            // 同链路应答：刷新地址与链路计时（防翻转）
+                            entry.addr = src;
+                            entry.via_last_seen = Instant::now();
+                        } else if entry.via_last_seen.elapsed()
+                            > Duration::from_secs(FAILOVER_SILENT_SECS)
+                        {
+                            // 故障转移：锁定链路静默超时但设备从其他链路持续应答，
+                            // 判定原链路失效（UDP 发包不会报错，必须靠应答判定），切换下发链路
+                            emit_log(
+                                app,
+                                format!(
+                                    "设备 {} 原下发链路 {} 失联，已切换到 {}",
+                                    entry.model.equip_id,
+                                    v,
+                                    local_ip.map(|i| i.to_string()).unwrap_or_default()
+                                ),
+                            );
+                            entry.via = local_ip;
+                            entry.addr = src;
+                            entry.via_last_seen = Instant::now();
                         }
+                        // 其余情况：其他链路应答仅维持在线状态，不改下发链路
                     }
                 }
                 entry.last_seen = Instant::now();
