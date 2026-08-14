@@ -38,7 +38,7 @@ const dhcp = ref<DhcpStatus>({
 });
 const leases = ref<DhcpLease[]>([]);
 /** 智能模式：检测到真实网络自动跳过（仅网线直连离线场景启用），持久化 */
-const dhcpAuto = ref(localStorage.getItem("kt.dhcpAuto") !== "0");
+const dhcpAuto = ref(localStorage.getItem("kt.dhcpAuto") === "1");
 function setDhcpAuto(v: boolean) {
   dhcpAuto.value = v;
   localStorage.setItem("kt.dhcpAuto", v ? "1" : "0");

@@ -151,10 +151,19 @@ fn bind_socket(bind_ip: Ipv4Addr, base_port: u16, attempts: u16) -> Result<(UdpS
             Err(e) => last_err = Some(e),
         }
     }
+    let unavailable = matches!(
+        last_err.as_ref().map(|e| e.kind()),
+        Some(std::io::ErrorKind::AddrNotAvailable)
+    );
+    let last = last_err.map(|e| e.to_string()).unwrap_or_default();
+    // 绑定到已断开网卡的过期 IP 会报 AddrNotAvailable，并非真占用，文案需区分引导
+    if unavailable {
+        return Err(format!("所选网卡的 IP 不可用（可能已断开或 IP 已失效），请在顶部重新选择网卡后重试（最后错误: {last}）"));
+    }
     Err(format!(
         "端口 {base_port}-{} 全部被占用，请关闭可能占用的程序后重试（最后错误: {}）",
         base_port + attempts - 1,
-        last_err.map(|e| e.to_string()).unwrap_or_default()
+        last
     ))
 }
 

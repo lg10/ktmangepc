@@ -545,6 +545,18 @@ impl DhcpService {
             cmd[5] = 0;
             let helper: SocketAddr = (Ipv4Addr::LOCALHOST, RELAY_HELPER_PORT).into();
             let _ = sock.send_to(&cmd, helper).await;
+            // 同步等待助手释放控制端口（最多 3s），避免立即重开 DHCP 时新助手绑定失败
+            for _ in 0..15 {
+                if std::net::UdpSocket::bind(SocketAddr::from((
+                    Ipv4Addr::LOCALHOST,
+                    RELAY_HELPER_PORT,
+                )))
+                .is_ok()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
         }
         if !inner.running {
             return;
@@ -614,8 +626,32 @@ async fn wait_relay_ready(
     }
 }
 
+/// 本机所有网卡 MAC 的十六进制串（大写无分隔符）：
+/// DHCP 服务器不得给本机自身网卡分配地址
+fn local_mac_hexes() -> &'static [String] {
+    static MACS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        local_ip_address::list_afinet_netifas()
+            .map(|list| {
+                let mut seen = std::collections::HashSet::new();
+                let mut out = Vec::new();
+                for (name, _) in list {
+                    if !seen.insert(name.clone()) {
+                        continue;
+                    }
+                    if let Ok(Some(m)) = mac_address::mac_address_by_name(&name) {
+                        out.push(m.to_string().to_uppercase().replace(':', ""));
+                    }
+                }
+                out
+            })
+            .unwrap_or_default()
+    });
+    &MACS
+}
+
 /// BOOTP 请求处理：地址分配与租约管理（直连/中继两种模式共用），
 /// 返回 (分配 IP, 客户端 MAC, xid, 应答类型)
+
 async fn process_bootp(
     svc: &DhcpService,
     app: &AppHandle,
@@ -623,6 +659,12 @@ async fn process_bootp(
 ) -> Option<(Ipv4Addr, [u8; 6], [u8; 4], u8)> {
     let (mac, msg_type, xid) = parse_request(data)?;
     let mac_str = hex::encode_upper(mac);
+
+    // 不响应本机自身 MAC 的 DISCOVER/REQUEST：
+    // Windows DHCP 客户端会从自己的服务器租到地址，停止后租约残留造成网卡列表混乱
+    if local_mac_hexes().iter().any(|m| m == &mac_str) {
+        return None;
+    }
 
     let mut inner = svc.inner.lock().await;
     // 分配或复用地址

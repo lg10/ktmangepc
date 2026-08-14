@@ -66,6 +66,7 @@ fn now_secs() -> u64 {
 
 /// 助手中继主循环；返回进程退出码
 pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
+    let mut bind_retry = 0u8;
     // 1. 网卡 192.168.134.1 配置（助手以特权运行，退出时还原本次新增的地址）
     let nic_added = match ensure_subnet_ip(nic) {
         Ok(added) => added,
@@ -80,13 +81,22 @@ pub fn run_relay(app_port: u16, helper_port: u16, nic: &str) -> i32 {
         }
     };
 
-    // 2. 特权端口与控制端口
-    let s67 = match UdpSocket::bind("0.0.0.0:67") {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("[dhcp-relay] 绑定 67 端口失败: {e}");
-            cleanup(nic_added, nic);
-            return 1;
+    // 2. 特权端口与控制端口；旧助手退出释放 67 需要数秒，
+    // 立即重开 DHCP 时重试绑定吸收该竞态窗口
+    let s67 = loop {
+        match UdpSocket::bind("0.0.0.0:67") {
+            Ok(s) => break s,
+            Err(e) => {
+                let kind = e.kind();
+                if kind == std::io::ErrorKind::AddrInUse && bind_retry < 8 {
+                    bind_retry += 1;
+                    std::thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+                eprintln!("[dhcp-relay] 绑定 67 端口失败: {e}");
+                cleanup(nic_added, nic);
+                return 1;
+            }
         }
     };
     // 回包需广播到 255.255.255.255（客户端尚未取得 IP），未设置该选项时发送会静默失败
