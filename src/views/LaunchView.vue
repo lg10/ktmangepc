@@ -30,11 +30,18 @@ const router = useRouter();
 const deviceStore = useDeviceStore();
 const { toast } = useToast();
 
-const selectedMode = ref<RunMode>(1);
+// 默认全局扫描：免选网卡自动覆盖所有网卡，日常使用操作最少
+const selectedMode = ref<RunMode>(3);
 const segmentsText = ref("");
 const starting = ref(false);
 
 const modeCards = computed(() => [
+  {
+    mode: 3 as RunMode,
+    icon: Globe,
+    title: t("launch.global"),
+    desc: t("launch.globalDesc"),
+  },
   {
     mode: 1 as RunMode,
     icon: Radio,
@@ -46,12 +53,6 @@ const modeCards = computed(() => [
     icon: Zap,
     title: t("launch.super"),
     desc: t("launch.superDesc"),
-  },
-  {
-    mode: 3 as RunMode,
-    icon: Globe,
-    title: t("launch.global"),
-    desc: t("launch.globalDesc"),
   },
   {
     mode: 4 as RunMode,
