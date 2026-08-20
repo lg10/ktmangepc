@@ -1,6 +1,8 @@
 //! KT Device Scan Tauri 2.0 桌面端库入口
 
+pub mod adbshell;
 pub mod auth;
+pub mod checkin;
 pub mod commands;
 pub mod db;
 pub mod dhcp;
@@ -41,6 +43,8 @@ pub fn run() {
                 hotel: Arc::new(hotel::HotelService::default()),
                 telnet: Arc::new(telnet::TelnetService::default()),
                 inetshare: Arc::new(inetshare::InetShareService::default()),
+                checkin: Arc::new(checkin::CheckinService::default()),
+                adbshell: Arc::new(adbshell::AdbShellService::default()),
                 db,
             };
             // 启动即恢复本地登录态（供 Splash 校验）
@@ -130,6 +134,15 @@ pub fn run() {
             telnet::telnet_write,
             telnet::telnet_close,
             telnet::telnet_list,
+            // 入住机 mDNS 发现
+            checkin::checkin_start,
+            checkin::checkin_stop,
+            checkin::checkin_status,
+            checkin::checkin_list,
+            // ADB 终端
+            adbshell::adb_shell_open,
+            adbshell::adb_shell_write,
+            adbshell::adb_shell_close,
         ])
         .on_window_event(|window, event| {
             // DHCP/中继运行中拦截关窗：前端弹「正在恢复」等待弹窗，

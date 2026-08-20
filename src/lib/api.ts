@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AuthInfo,
+  CheckinDevice,
+  CheckinStatus,
   DhcpLease,
   DhcpStatus,
   EnvReport,
@@ -41,6 +43,11 @@ export const EVENTS = {
   TASK_UPDATE: "task://update",
   TELNET_DATA: "telnet://data",
   TELNET_CLOSED: "telnet://closed",
+  CHECKIN_DEVICE: "checkin://device",
+  CHECKIN_DEVICE_OFFLINE: "checkin://device-offline",
+  CHECKIN_STATUS: "checkin://status",
+  ADB_DATA: "adb://data",
+  ADB_CLOSED: "adb://closed",
 } as const;
 
 export const api = {
@@ -157,4 +164,15 @@ export const api = {
     invoke<void>("telnet_write", { id, data }),
   telnetClose: (id: string) => invoke<void>("telnet_close", { id }),
   telnetList: () => invoke<TelnetSession[]>("telnet_list"),
+
+  /** 入住机 mDNS 发现（服务类型 _kingint-kcd._tcp） */
+  checkinStart: () => invoke<void>("checkin_start"),
+  checkinStop: () => invoke<void>("checkin_stop"),
+  checkinStatus: () => invoke<CheckinStatus>("checkin_status"),
+  checkinList: () => invoke<CheckinDevice[]>("checkin_list"),
+
+  /** ADB 终端（内置 adb 的系统 shell 会话，关窗即销毁） */
+  adbShellOpen: () => invoke<void>("adb_shell_open"),
+  adbShellWrite: (data: number[]) => invoke<void>("adb_shell_write", { data }),
+  adbShellClose: () => invoke<void>("adb_shell_close"),
 };

@@ -5,6 +5,7 @@ import { useDeviceStore } from "@/stores/device";
 import { useTaskStore } from "@/stores/task";
 import { useHotelStore } from "@/stores/hotel";
 import { useTelnetStore } from "@/stores/telnet";
+import { useCheckinStore } from "@/stores/checkin";
 import { useUiStore } from "@/stores/ui";
 import { PanelBottom, Terminal, ListChecks, ScrollText } from "lucide-vue-next";
 
@@ -12,6 +13,7 @@ const deviceStore = useDeviceStore();
 const taskStore = useTaskStore();
 const hotelStore = useHotelStore();
 const telnetStore = useTelnetStore();
+const checkinStore = useCheckinStore();
 const uiStore = useUiStore();
 
 const modeLabel = computed(() => {
@@ -24,6 +26,8 @@ const modeLabel = computed(() => {
       return "DHCP 直连";
     case 4:
       return "门锁扫描";
+    case 5:
+      return "入住机扫描";
     default:
       return "";
   }
@@ -63,6 +67,15 @@ onMounted(async () => {
 
     <span class="text-border">|</span>
     <span>{{ deviceStore.status.deviceCount }} 台设备</span>
+
+    <!-- 入住机 mDNS 扫描服务（与 UDP 服务独立并行） -->
+    <template v-if="checkinStore.running">
+      <span class="text-border">|</span>
+      <span class="flex items-center gap-1.5">
+        <span class="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+        入住机扫描 · {{ checkinStore.deviceCount }} 台
+      </span>
+    </template>
 
     <button
       v-if="taskStore.activeCount > 0"

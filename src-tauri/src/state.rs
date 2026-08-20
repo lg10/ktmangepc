@@ -1,6 +1,8 @@
 //! 全局状态容器（Pinia 单一状态源的服务端对应物）
 
+use crate::adbshell::AdbShellService;
 use crate::auth::AuthService;
+use crate::checkin::CheckinService;
 use crate::db::DbService;
 use crate::dhcp::DhcpService;
 use crate::filestore::FileStore;
@@ -22,4 +24,6 @@ pub struct AppState {
     pub hotel: Arc<HotelService>,
     pub telnet: Arc<TelnetService>,
     pub inetshare: Arc<InetShareService>,
+    pub checkin: Arc<CheckinService>,
+    pub adbshell: Arc<AdbShellService>,
 }

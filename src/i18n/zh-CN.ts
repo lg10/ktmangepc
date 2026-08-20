@@ -40,10 +40,13 @@ export default {
     segmentsPlaceholder: "输入网段第三段，多个用逗号分隔，如：1,2,3",
     lock: "门锁扫描",
     lockDesc: "监听 8787 端口接收门锁上报",
+    checkin: "入住机扫描",
+    checkinDesc: "mDNS 发现局域网入住机，登录拉取详情并直达管理台",
     dhcp: "DHCP 直连",
     dhcpDesc: "本机作为 DHCP 服务器，为网线直连设备自动分配 IP",
     dhcpAuto: "智能模式：离线自动开启，联网自动关闭",
     start: "启动并进入监控",
+    checkinStart: "启动并进入入住机扫描",
     dhcpNeedPrivilege:
       "DHCP 服务需要绑定 67 端口，请以管理员/root 权限运行本软件",
   },

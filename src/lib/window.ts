@@ -1,4 +1,4 @@
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 /** macOS：原生 overlay 标题栏（圆角/阴影/真红绿灯）；其他平台自定义无边框（自绘三键，标题栏即自定义内容栏） */
@@ -41,6 +41,8 @@ export async function openWorkbenchWindow(fresh = false) {
     decorations: isMac,
     titleBarStyle: isMac ? "overlay" : "visible",
     hiddenTitle: true,
+    // 红绿灯在 40px 自绘顶栏内垂直居中（按钮高 12px → y=14）
+    trafficLightPosition: isMac ? new LogicalPosition(12, 14) : undefined,
   });
 }
 
@@ -61,5 +63,41 @@ export async function openLoginWindow() {
     decorations: isMac,
     titleBarStyle: isMac ? "overlay" : "visible",
     hiddenTitle: true,
+  });
+}
+
+/**
+ * 入住机管理台窗口：无边框 + 自绘顶栏（地球图标转系统浏览器），
+ * 内容区由 BrowserView 创建子 webview 加载设备管理页。
+ * label 按设备 host 去重：同一台设备复窗聚焦，不同设备各开一窗。
+ */
+export async function openAdminWindow(url: string, title: string) {
+  let host = "device";
+  try {
+    host = new URL(url).host.replace(/[.:]/g, "-");
+  } catch {
+    /* 非法 URL 由后续加载失败兜底 */
+  }
+  const label = `admin-${host}`;
+  const existing = await WebviewWindow.getByLabel(label);
+  if (existing) {
+    await existing.setFocus();
+    return existing;
+  }
+  return new WebviewWindow(label, {
+    title,
+    url: `/#/browser?url=${encodeURIComponent(url)}&title=${encodeURIComponent(title)}`,
+    width: 1200,
+    height: 800,
+    minWidth: 720,
+    minHeight: 480,
+    center: true,
+    resizable: true,
+    // macOS 用原生红绿灯（overlay 嵌入自绘顶栏，可拖动/关闭）；
+    // 纯 decorations:false 在 mac 上无原生控件会导致窗口无法关闭
+    decorations: isMac,
+    titleBarStyle: isMac ? "overlay" : "visible",
+    hiddenTitle: true,
+    trafficLightPosition: isMac ? new LogicalPosition(12, 14) : undefined,
   });
 }

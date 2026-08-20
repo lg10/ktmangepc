@@ -17,5 +17,12 @@ pub const FILE_FETCH_PROGRESS: &str = "file://fetch-progress";
 pub const TASK_UPDATE: &str = "task://update";
 pub const TELNET_DATA: &str = "telnet://data";
 pub const TELNET_CLOSED: &str = "telnet://closed";
+// 入住机 mDNS 发现
+pub const CHECKIN_DEVICE: &str = "checkin://device";
+pub const CHECKIN_DEVICE_OFFLINE: &str = "checkin://device-offline";
+pub const CHECKIN_STATUS: &str = "checkin://status";
+// ADB 终端 shell 会话
+pub const ADB_DATA: &str = "adb://data";
+pub const ADB_CLOSED: &str = "adb://closed";
 // 退出拦截：DHCP/中继运行中关窗被拦下，前端据此弹「正在恢复」等待弹窗
 pub const EXIT_BLOCKED: &str = "app://exit-blocked";

@@ -37,6 +37,21 @@ else
   echo "[warn] 未设置 APPLE_ID/APPLE_PASSWORD：本次仅签名不公证"
 fi
 
+# 内置 adb 工具预签名：公证要求嵌套二进制带 Developer ID 签名与 hardened runtime。
+# 先暂存到 resources/adb 并写入平台标记，build.rs 见标记同平台时跳过重拷，签名得以保留。
+ADB_RES=src-tauri/resources/adb
+if [ ! -d "$ADB_RES" ]; then
+  mkdir -p src-tauri/resources
+  cp -R src-tauri/vendor/adb/platform-tools-mac "$ADB_RES"
+fi
+printf 'platform-tools-mac' > src-tauri/resources/.adb-staged
+for bin in adb etc1tool fastboot hprof-conv make_f2fs make_f2fs_casefold mke2fs sqlite3; do
+  if [ -f "$ADB_RES/$bin" ]; then
+    echo "[info] 签名内置工具: $bin"
+    codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$ADB_RES/$bin"
+  fi
+done
+
 pnpm tauri build --target aarch64-apple-darwin
 pnpm tauri build --target x86_64-apple-darwin
 

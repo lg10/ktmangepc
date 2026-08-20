@@ -22,6 +22,7 @@ import {
   LockKeyhole,
   RefreshCw,
   Loader2,
+  TabletSmartphone,
 } from "lucide-vue-next";
 import type { RunMode } from "@/types";
 
@@ -60,15 +61,30 @@ const modeCards = computed(() => [
     title: t("launch.lock"),
     desc: t("launch.lockDesc"),
   },
+  {
+    mode: 5 as RunMode,
+    icon: TabletSmartphone,
+    title: t("launch.checkin"),
+    desc: t("launch.checkinDesc"),
+  },
 ]);
 
 onMounted(async () => {
   await deviceStore.loadInterfaces();
-  // 服务已在运行（例如从监控页停止前离开又返回）：直达设备监控
+  // 服务已在运行（例如从监控页停止前离开又返回）：直达对应页面
   try {
     const st = await api.getServerStatus();
     deviceStore.setStatus(st);
-    if (st.running) router.replace({ name: "monitor" });
+    if (st.running) {
+      router.replace({ name: "monitor" });
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const cs = await api.checkinStatus();
+    if (cs.running) router.replace({ name: "checkin" });
   } catch {
     /* ignore */
   }
@@ -79,6 +95,24 @@ async function refreshInterfaces() {
 }
 
 async function start() {
+  // 入住机扫描：mDNS 发现免选网卡，与 UDP 服务相互独立
+  if (selectedMode.value === 5) {
+    starting.value = true;
+    try {
+      await api.checkinStart();
+      router.push({ name: "checkin" });
+    } catch (e) {
+      toast({
+        title: t("common.failed"),
+        description: String(e),
+        variant: "destructive",
+      });
+    } finally {
+      starting.value = false;
+    }
+    return;
+  }
+
   // 全局扫描免选网卡；其余模式需先选工作网卡
   if (selectedMode.value !== 3 && !deviceStore.selectedNic) {
     toast({ title: "请先选择工作网卡", variant: "destructive" });
@@ -127,8 +161,8 @@ async function start() {
       选择网卡与工作方式后启动服务，自动进入设备监控；DHCP 服务请在设置中开启
     </p>
 
-    <!-- 网卡选择（全局扫描免选，自动覆盖所有网卡） -->
-    <Card v-if="selectedMode !== 3" class="mt-6 p-5">
+    <!-- 网卡选择（全局扫描 / 入住机扫描免选） -->
+    <Card v-if="selectedMode !== 3 && selectedMode !== 5" class="mt-6 p-5">
       <div class="flex items-end gap-3">
         <div class="flex-1 space-y-1.5">
           <Label>{{ t("launch.interface") }}</Label>
@@ -202,7 +236,7 @@ async function start() {
     <div class="mt-8 flex justify-end pb-4">
       <Button size="lg" class="w-56" :disabled="starting" @click="start">
         <Loader2 v-if="starting" class="h-4 w-4 animate-spin" />
-        {{ t("launch.start") }}
+        {{ selectedMode === 5 ? t("launch.checkinStart") : t("launch.start") }}
       </Button>
     </div>
     </div>

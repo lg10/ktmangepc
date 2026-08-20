@@ -9,8 +9,11 @@ import { useAuthStore } from "@/stores/auth";
 import { useTaskStore } from "@/stores/task";
 import { useTelnetStore } from "@/stores/telnet";
 import { useFileStore } from "@/stores/file";
+import { useCheckinStore } from "@/stores/checkin";
 import { useUiStore } from "@/stores/ui";
 import type {
+  CheckinDevice,
+  CheckinStatus,
   FetchProgress,
   LockPacket,
   RcuDevice,
@@ -25,6 +28,7 @@ const authStore = useAuthStore();
 const taskStore = useTaskStore();
 const telnetStore = useTelnetStore();
 const fileStore = useFileStore();
+const checkinStore = useCheckinStore();
 const uiStore = useUiStore();
 
 let unlisteners: UnlistenFn[] = [];
@@ -71,6 +75,16 @@ onMounted(async () => {
     // 收到设备回包即为真实已连接（兼容 invoke 返回时序，避免卡在“连接中”）
     listen<{ id: string; data: string }>(EVENTS.TELNET_DATA, (e) =>
       telnetStore.markConnected(e.payload.id)
+    ),
+    // 入住机 mDNS 发现事件
+    listen<CheckinDevice>(EVENTS.CHECKIN_DEVICE, (e) =>
+      checkinStore.upsertDevice(e.payload)
+    ),
+    listen<string>(EVENTS.CHECKIN_DEVICE_OFFLINE, (e) =>
+      checkinStore.removeDevice(e.payload)
+    ),
+    listen<CheckinStatus>(EVENTS.CHECKIN_STATUS, (e) =>
+      checkinStore.setStatus(e.payload)
     ),
   ]);
 

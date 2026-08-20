@@ -1,6 +1,6 @@
 [package]
 name = "kt-mange-pc"
-version = "3.1.4"
+version = "3.1.5"
 description = "KT Device Scan - 酒店智能设备管理工具"
 authors = ["KinginT 肯天科技集团"]
 edition = "2021"
@@ -13,7 +13,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# unstable：启用多 webview（管理台窗口内向已有窗口追加子 webview 加载外部管理页）
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
@@ -40,6 +41,8 @@ local-ip-address = "0.6"
 mac_address = "1.1"
 encoding_rs = "0.8"
 thiserror = "2"
+mdns-sd = "0.13"
+portable-pty = "0.8"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

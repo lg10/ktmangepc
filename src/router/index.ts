@@ -20,6 +20,12 @@ const router = createRouter({
       component: () => import("@/views/HotelSelectView.vue"),
     },
     {
+      // 入住机管理台内嵌窗口（独立 WebviewWindow 加载，不走登录态）
+      path: "/browser",
+      name: "browser",
+      component: () => import("@/views/BrowserView.vue"),
+    },
+    {
       path: "/app",
       component: () => import("@/layouts/WorkbenchLayout.vue"),
       children: [
@@ -32,6 +38,11 @@ const router = createRouter({
           path: "monitor",
           name: "monitor",
           component: () => import("@/views/MonitorView.vue"),
+        },
+        {
+          path: "checkin",
+          name: "checkin",
+          component: () => import("@/views/CheckinView.vue"),
         },
         // 文件库 / 设置已改为弹窗形式（uiStore.filesOpen/settingsOpen），
         // 旧 hash 链接兼容：重定向回工作模式

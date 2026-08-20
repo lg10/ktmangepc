@@ -41,6 +41,8 @@ export const useUiStore = defineStore("ui", {
     /** 文件库 / 设置改为弹窗形式，避免路由切换影响正在进行的设备扫描 */
     filesOpen: false,
     settingsOpen: false,
+    /** ADB 终端弹窗（不持久化：关闭即销毁 shell 会话） */
+    adbTerminalOpen: false,
   }),
   actions: {
     openFiles() {

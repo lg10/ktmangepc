@@ -14,6 +14,7 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeft,
+  SquareTerminal,
 } from "lucide-vue-next";
 
 const route = useRoute();
@@ -25,6 +26,7 @@ const uiStore = useUiStore();
 const navItems = [
   { name: "launch", label: "工作模式", icon: Rocket },
   { name: "files", label: "文件库", icon: FolderArchive },
+  { name: "adb", label: "ADB 终端", icon: SquareTerminal },
   { name: "settings", label: "设置", icon: Settings },
 ];
 
@@ -36,6 +38,8 @@ function navigate(name: string) {
     router.push({ name: "launch" });
   } else if (name === "files") {
     uiStore.filesOpen ? (uiStore.filesOpen = false) : uiStore.openFiles();
+  } else if (name === "adb") {
+    uiStore.adbTerminalOpen = !uiStore.adbTerminalOpen;
   } else if (name === "settings") {
     uiStore.settingsOpen ? (uiStore.settingsOpen = false) : uiStore.openSettings();
   }
@@ -45,6 +49,7 @@ function isActive(name: string) {
   if (name === "launch")
     return route.name === "launch" && !uiStore.filesOpen && !uiStore.settingsOpen;
   if (name === "files") return uiStore.filesOpen;
+  if (name === "adb") return uiStore.adbTerminalOpen;
   return uiStore.settingsOpen;
 }
 

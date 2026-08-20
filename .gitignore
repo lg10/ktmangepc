@@ -3,6 +3,8 @@ node_modules/
 dist/
 dist-cdn/
 src-tauri/target/
+# adb 资源暂存产物（build.rs 按目标平台从 vendor/adb 生成）
+src-tauri/resources/
 
 # 更新签名私钥（严禁提交；公钥 .pub 可提交）
 src-tauri/keys/*.key

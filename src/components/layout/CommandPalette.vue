@@ -14,6 +14,7 @@ import {
   PanelLeft,
   Trash2,
   Search,
+  SquareTerminal,
 } from "lucide-vue-next";
 
 const router = useRouter();
@@ -35,6 +36,11 @@ interface Cmd {
 const commands = computed<Cmd[]>(() => [
   { label: "前往：工作模式", icon: Rocket, run: () => router.push({ name: "launch" }) },
   { label: "打开：文件库", icon: FolderArchive, run: () => uiStore.openFiles() },
+  {
+    label: uiStore.adbTerminalOpen ? "关闭：ADB 终端" : "打开：ADB 终端",
+    icon: SquareTerminal,
+    run: () => (uiStore.adbTerminalOpen = !uiStore.adbTerminalOpen),
+  },
   { label: "打开：设置", icon: Settings, run: () => uiStore.openSettings() },
   {
     label: deviceStore.status.running ? "停止 UDP 服务" : "启动 UDP 服务",

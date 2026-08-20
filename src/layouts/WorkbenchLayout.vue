@@ -16,6 +16,7 @@ import CommandPalette from "@/components/layout/CommandPalette.vue";
 import WelcomeGreeting from "@/components/layout/WelcomeGreeting.vue";
 import ExitGuardDialog from "@/components/ExitGuardDialog.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
+import AdbTerminalDialog from "@/components/AdbTerminalDialog.vue";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import FilesView from "@/views/FilesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
@@ -167,5 +168,8 @@ onBeforeUnmount(() => {
         </div>
       </DialogContent>
     </Dialog>
+
+    <!-- ADB 终端：内置 adb 的系统 shell 弹窗，关闭即销毁会话 -->
+    <AdbTerminalDialog />
   </div>
 </template>

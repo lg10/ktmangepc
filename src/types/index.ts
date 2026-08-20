@@ -10,8 +10,32 @@ export interface NetInterface {
   up: boolean;
 }
 
-/** 运行模式：1 普通扫描 2 超级模式 3 全局扫描 4 门锁扫描 */
-export type RunMode = 1 | 2 | 3 | 4;
+/** 运行模式：1 普通扫描 2 超级模式 3 全局扫描 4 门锁扫描 5 入住机扫描 */
+export type RunMode = 1 | 2 | 3 | 4 | 5;
+
+/** 入住机 mDNS 发现设备（服务类型 _kingint-kcd._tcp，端口 7271） */
+export interface CheckinDevice {
+  /** mDNS 实例全名（多台同名设备自动加后缀，唯一键） */
+  fullName: string;
+  /** 服务实例名（如 checkin / checkin (2)） */
+  name: string;
+  ip: string;
+  port: number;
+}
+
+/** 入住机扫描服务状态 */
+export interface CheckinStatus {
+  running: boolean;
+  deviceCount: number;
+}
+
+/** 入住机详情（登录设备管理接口后 /api/device/info 返回，字段随设备实现） */
+export interface CheckinDeviceInfo {
+  deviceId?: string;
+  model?: string;
+  version?: string;
+  [key: string]: unknown;
+}
 
 /** UDP 服务状态 */
 export interface ServerStatus {
