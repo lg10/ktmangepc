@@ -11,7 +11,9 @@ import {
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { RefreshCw, PowerOff } from "lucide-vue-next";
+import { RefreshCw, PowerOff, Smartphone } from "lucide-vue-next";
+import { Button } from "@/components/ui/button";
+import AdbDevicePanel from "@/components/AdbDevicePanel.vue";
 
 /**
  * ADB 终端弹窗：内置 adb（PATH 注入）的完整系统 shell 会话。
@@ -22,6 +24,7 @@ const uiStore = useUiStore();
 const hostRef = ref<HTMLElement | null>(null);
 const closed = ref(false);
 const openError = ref("");
+const panelOpen = ref(false);
 
 let term: Terminal | null = null;
 let fit: FitAddon | null = null;
@@ -92,6 +95,7 @@ watch(
 
       await spawn();
     } else {
+      panelOpen.value = false;
       await teardown(true);
     }
   }
@@ -127,12 +131,22 @@ onBeforeUnmount(() => {
   <Dialog :open="uiStore.adbTerminalOpen" @update:open="uiStore.adbTerminalOpen = $event">
     <DialogContent
       class="max-w-6xl w-[80vw] h-[80vh] flex flex-col gap-0 p-0 overflow-hidden"
+      :show-close="!panelOpen"
     >
       <div class="shrink-0 flex items-center px-6 pt-4 pb-2">
         <DialogTitle class="text-base">ADB 终端</DialogTitle>
         <span class="ml-2 text-xs text-muted-foreground">
           内置 adb 已注入 PATH，直接敲 adb 即可使用
         </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="ml-auto h-7 gap-1.5 text-xs"
+          @click="panelOpen = !panelOpen"
+        >
+          <Smartphone class="h-3.5 w-3.5" />
+          已连接设备
+        </Button>
       </div>
 
       <div class="flex-1 min-h-0 px-4 pb-4">
@@ -164,6 +178,8 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
+
+      <AdbDevicePanel v-model:open="panelOpen" />
     </DialogContent>
   </Dialog>
 </template>
