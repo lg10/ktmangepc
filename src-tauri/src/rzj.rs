@@ -116,14 +116,13 @@ fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// 清空缓存目录内其他 .apk 与残留 .part（版本更新后旧包不堆积）
+/// 清空缓存目录内其他 .apk（版本更新后旧包不堆积）
 fn clean_cache(dir: &Path, keep: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let p = e.path();
         let is_old_apk = p.extension().map(|x| x == "apk").unwrap_or(false) && p != keep;
-        let is_part = p.to_string_lossy().ends_with(".part");
-        if is_old_apk || is_part {
+        if is_old_apk {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -136,6 +135,8 @@ pub struct RzjService {
     downloads: Mutex<HashMap<String, Arc<OnceCell<PathBuf>>>>,
     /// URL -> 等待者序列号列表（下载进度广播用）
     waiters: Mutex<HashMap<String, Vec<String>>>,
+    /// 残留 .part 是否已清理过（服务生命周期内只清一次）
+    part_swept: OnceCell<()>,
     http: reqwest::Client,
 }
 
@@ -145,6 +146,7 @@ impl Default for RzjService {
             running: Mutex::new(HashSet::new()),
             downloads: Mutex::new(HashMap::new()),
             waiters: Mutex::new(HashMap::new()),
+            part_swept: OnceCell::new(),
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
                 .timeout(std::time::Duration::from_secs(15))
@@ -305,6 +307,24 @@ impl RzjService {
         res.cloned()
     }
 
+    /// 首次下载前清理残留 .part（整个服务生命周期只执行一次，避免误删并发下载的在途文件）
+    async fn sweep_parts(&self, app: &AppHandle) {
+        self.part_swept
+            .get_or_init(|| async {
+                if let Ok(dir) = cache_dir(app) {
+                    if let Ok(entries) = std::fs::read_dir(&dir) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.to_string_lossy().ends_with(".part") {
+                                let _ = std::fs::remove_file(p);
+                            }
+                        }
+                    }
+                }
+            })
+            .await;
+    }
+
     /// 实际下载：先清旧缓存 → .part 临时文件 → 完成后改名；进度向所有等待者广播
     async fn download(
         self: &Arc<Self>,
@@ -313,6 +333,7 @@ impl RzjService {
         target: &Path,
     ) -> Result<PathBuf, String> {
         let dir = target.parent().ok_or("缓存路径异常")?;
+        self.sweep_parts(app).await;
         clean_cache(dir, target);
         let resp = self
             .http
@@ -412,14 +433,18 @@ impl RzjService {
     /// monkey 拉起入住机；失败只警告不视为任务失败（由 pipeline 决定）
     async fn launch(&self, app: &AppHandle, serial: &str) -> Result<(), String> {
         let adb = adb_binary(app)?;
-        let out = tokio::process::Command::new(&adb)
-            .args([
-                "-s", serial, "shell", "monkey", "-p", PACKAGE,
-                "-c", "android.intent.category.LAUNCHER", "1",
-            ])
-            .output()
-            .await
-            .map_err(|e| format!("拉起命令执行失败: {e}"))?;
+        let out = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::process::Command::new(&adb)
+                .args([
+                    "-s", serial, "shell", "monkey", "-p", PACKAGE,
+                    "-c", "android.intent.category.LAUNCHER", "1",
+                ])
+                .output()
+                .await
+        })
+        .await
+        .map_err(|_| "拉起命令超时".to_string())?
+        .map_err(|e| format!("拉起命令执行失败: {e}"))?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
