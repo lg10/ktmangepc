@@ -366,42 +366,47 @@ impl RzjService {
             .args(["-s", serial, "install", "-r"])
             .arg(apk)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|e| format!("启动 adb install 失败: {e}"))?;
-        let mut stdout = child.stdout.take().ok_or("adb 输出获取失败")?;
-        let mut all = String::new();
-        let mut buf = vec![0u8; 2048];
-        loop {
-            let n = stdout
-                .read(&mut buf)
-                .await
-                .map_err(|e| format!("adb 输出读取失败: {e}"))?;
-            if n == 0 {
-                break;
+        // stderr 已置空（防止管道写满阻塞）；整体 900s 超时兜底，超时杀掉子进程
+        let res = tokio::time::timeout(std::time::Duration::from_secs(900), async {
+            let mut stdout = child.stdout.take().ok_or_else(|| "adb 输出获取失败".to_string())?;
+            let mut all = String::new();
+            let mut buf = vec![0u8; 2048];
+            loop {
+                let n = stdout
+                    .read(&mut buf)
+                    .await
+                    .map_err(|e| format!("adb 输出读取失败: {e}"))?;
+                if n == 0 {
+                    break;
+                }
+                let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                all.push_str(&chunk);
+                if let Some(p) = parse_install_percent(&chunk) {
+                    emit(app, serial, "install", p, format!("安装中 {p}%"));
+                }
             }
-            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-            all.push_str(&chunk);
-            if let Some(p) = parse_install_percent(&chunk) {
-                emit(app, serial, "install", p, format!("安装中 {p}%"));
+            let status = child.wait().await.map_err(|e| format!("等待 adb 退出失败: {e}"))?;
+            if !status.success() || !all.contains("Success") {
+                let detail = all.trim().lines().last().unwrap_or("未知错误");
+                return Err(format!("安装失败: {}", detail.trim()));
+            }
+            Ok::<(), String>(())
+        })
+        .await;
+        match res {
+            Ok(inner) => {
+                inner?;
+                emit(app, serial, "install", 100, "安装完成".into());
+                Ok(())
+            }
+            Err(_) => {
+                let _ = child.start_kill();
+                Err("安装超时".to_string())
             }
         }
-        let status = child.wait().await.map_err(|e| format!("等待 adb 退出失败: {e}"))?;
-        let mut err = String::new();
-        if let Some(mut stderr) = child.stderr.take() {
-            let _ = stderr.read_to_string(&mut err).await;
-        }
-        if !status.success() || !all.contains("Success") {
-            let detail = err
-                .trim()
-                .lines()
-                .last()
-                .or_else(|| all.trim().lines().last())
-                .unwrap_or("未知错误");
-            return Err(format!("安装失败: {}", detail.trim()));
-        }
-        emit(app, serial, "install", 100, "安装完成".into());
-        Ok(())
     }
 
     /// monkey 拉起入住机；失败只警告不视为任务失败（由 pipeline 决定）
