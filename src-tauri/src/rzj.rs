@@ -211,6 +211,221 @@ impl RzjService {
         list.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(list)
     }
+
+    /// 发起安装任务（同设备进行中时拒绝）；任务在后台运行，进度经事件推送
+    pub async fn start_install(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        serial: String,
+        url: String,
+    ) -> Result<(), String> {
+        if url.is_empty() {
+            return Err("下载地址不能为空".into());
+        }
+        {
+            let mut running = self.running.lock().await;
+            if !running.insert(serial.clone()) {
+                return Err("该设备正在安装中".into());
+            }
+        }
+        let svc = self.clone();
+        let app2 = app.clone();
+        tokio::spawn(async move {
+            let res = svc.pipeline(&app2, &serial, &url).await;
+            match res {
+                Ok(msg) => emit(&app2, &serial, "done", 100, msg),
+                Err(e) => emit(&app2, &serial, "error", 0, e),
+            }
+            svc.running.lock().await.remove(&serial);
+        });
+        Ok(())
+    }
+
+    async fn pipeline(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        serial: &str,
+        url: &str,
+    ) -> Result<String, String> {
+        emit(app, serial, "download", 0, "准备下载".into());
+        let apk = self.ensure_downloaded(app, url, serial).await?;
+        emit(app, serial, "install", 0, "开始安装".into());
+        self.install_apk(app, serial, &apk).await?;
+        emit(app, serial, "launch", 100, "拉起应用".into());
+        match self.launch(app, serial).await {
+            Ok(()) => Ok("安装成功".into()),
+            Err(e) => Ok(format!("安装成功，拉起失败: {e}")),
+        }
+    }
+
+    /// 共享下载：文件已存在直接复用；否则注册等待者并去重下载（先到者下载、其余等待）
+    async fn ensure_downloaded(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        url: &str,
+        serial: &str,
+    ) -> Result<PathBuf, String> {
+        let dir = cache_dir(app)?;
+        let fname = url
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or("下载地址无效")?;
+        let target = dir.join(fname);
+        if target.exists() {
+            emit(app, serial, "download", 100, "已使用本地缓存包".into());
+            return Ok(target);
+        }
+        {
+            let mut w = self.waiters.lock().await;
+            w.entry(url.to_string()).or_default().push(serial.to_string());
+        }
+        let cell = {
+            let mut d = self.downloads.lock().await;
+            d.entry(url.to_string())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
+        };
+        let svc = self.clone();
+        let app2 = app.clone();
+        let url2 = url.to_string();
+        let target2 = target.clone();
+        let res = cell
+            .get_or_try_init(move || async move { svc.download(&app2, &url2, &target2).await })
+            .await;
+        {
+            let mut w = self.waiters.lock().await;
+            if let Some(v) = w.get_mut(url) {
+                v.retain(|s| s != serial);
+                if v.is_empty() {
+                    w.remove(url);
+                }
+            }
+        }
+        res.cloned()
+    }
+
+    /// 实际下载：先清旧缓存 → .part 临时文件 → 完成后改名；进度向所有等待者广播
+    async fn download(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        url: &str,
+        target: &Path,
+    ) -> Result<PathBuf, String> {
+        let dir = target.parent().ok_or("缓存路径异常")?;
+        clean_cache(dir, target);
+        let resp = self
+            .http
+            .get(url)
+            .timeout(std::time::Duration::from_secs(1800)) // 大文件下载：覆盖客户端 15s 整体超时
+            .send()
+            .await
+            .map_err(|e| format!("下载请求失败: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("下载失败: HTTP {}", resp.status()));
+        }
+        let total = resp.content_length().unwrap_or(0);
+        let tmp = target.with_extension("apk.part");
+        let mut file = tokio::fs::File::create(&tmp)
+            .await
+            .map_err(|e| format!("创建缓存文件失败: {e}"))?;
+        let mut resp = resp;
+        let mut done = 0u64;
+        let mut last = 0u8;
+        while let Some(chunk) = resp.chunk().await.map_err(|e| format!("下载中断: {e}"))? {
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("写入缓存失败: {e}"))?;
+            done += chunk.len() as u64;
+            if total > 0 {
+                let pct = ((done * 100) / total).min(100) as u8;
+                if pct != last {
+                    last = pct;
+                    let waiters = {
+                        let w = self.waiters.lock().await;
+                        w.get(url).cloned().unwrap_or_default()
+                    };
+                    for s in waiters {
+                        emit(app, &s, "download", pct, format!("下载中 {pct}%"));
+                    }
+                }
+            }
+        }
+        file.flush().await.map_err(|e| format!("写入缓存失败: {e}"))?;
+        drop(file);
+        tokio::fs::rename(&tmp, target)
+            .await
+            .map_err(|e| format!("缓存写入完成失败: {e}"))?;
+        Ok(target.to_path_buf())
+    }
+
+    /// `adb -s <serial> install -r <apk>`，流式解析百分比推进度
+    async fn install_apk(&self, app: &AppHandle, serial: &str, apk: &Path) -> Result<(), String> {
+        let adb = adb_binary(app)?;
+        let mut child = tokio::process::Command::new(&adb)
+            .args(["-s", serial, "install", "-r"])
+            .arg(apk)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("启动 adb install 失败: {e}"))?;
+        let mut stdout = child.stdout.take().ok_or("adb 输出获取失败")?;
+        let mut all = String::new();
+        let mut buf = vec![0u8; 2048];
+        loop {
+            let n = stdout
+                .read(&mut buf)
+                .await
+                .map_err(|e| format!("adb 输出读取失败: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+            all.push_str(&chunk);
+            if let Some(p) = parse_install_percent(&chunk) {
+                emit(app, serial, "install", p, format!("安装中 {p}%"));
+            }
+        }
+        let status = child.wait().await.map_err(|e| format!("等待 adb 退出失败: {e}"))?;
+        let mut err = String::new();
+        if let Some(mut stderr) = child.stderr.take() {
+            let _ = stderr.read_to_string(&mut err).await;
+        }
+        if !status.success() || !all.contains("Success") {
+            let detail = err
+                .trim()
+                .lines()
+                .last()
+                .or_else(|| all.trim().lines().last())
+                .unwrap_or("未知错误");
+            return Err(format!("安装失败: {}", detail.trim()));
+        }
+        emit(app, serial, "install", 100, "安装完成".into());
+        Ok(())
+    }
+
+    /// monkey 拉起入住机；失败只警告不视为任务失败（由 pipeline 决定）
+    async fn launch(&self, app: &AppHandle, serial: &str) -> Result<(), String> {
+        let adb = adb_binary(app)?;
+        let out = tokio::process::Command::new(&adb)
+            .args([
+                "-s", serial, "shell", "monkey", "-p", PACKAGE,
+                "-c", "android.intent.category.LAUNCHER", "1",
+            ])
+            .output()
+            .await
+            .map_err(|e| format!("拉起命令执行失败: {e}"))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if out.status.success() && !text.contains("Error") {
+            Ok(())
+        } else {
+            Err(text.lines().last().unwrap_or("未知错误").trim().to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -224,6 +439,16 @@ pub async fn rzj_devices(
 #[tauri::command]
 pub async fn rzj_releases(state: State<'_, AppState>) -> Result<Vec<RzjRelease>, String> {
     state.rzj.releases().await
+}
+
+#[tauri::command]
+pub async fn rzj_install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    serial: String,
+    url: String,
+) -> Result<(), String> {
+    state.rzj.start_install(&app, serial, url).await
 }
 
 #[cfg(test)]

@@ -148,6 +148,7 @@ pub fn run() {
             // 入住机一键安装
             rzj::rzj_devices,
             rzj::rzj_releases,
+            rzj::rzj_install,
         ])
         .on_window_event(|window, event| {
             // DHCP/中继运行中拦截关窗：前端弹「正在恢复」等待弹窗，
