@@ -18,6 +18,7 @@ pub mod netif;
 pub mod nicstate;
 pub mod protocol;
 pub mod restore;
+pub mod rzj;
 pub mod state;
 pub mod telnet;
 pub mod udp;

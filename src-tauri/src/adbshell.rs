@@ -154,7 +154,7 @@ impl AdbShellService {
 }
 
 /// 定位内置 adb 所在资源目录（打包：Resources/adb；dev：resources/adb）
-fn resolve_adb_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub(crate) fn resolve_adb_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let exe = if cfg!(windows) { "adb/adb.exe" } else { "adb/adb" };
     let path: std::path::PathBuf = app
         .path()
