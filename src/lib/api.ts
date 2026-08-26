@@ -17,6 +17,8 @@ import type {
   RcuDevice,
   ResidueReport,
   RunMode,
+  RzjDevice,
+  RzjRelease,
   ServerStatus,
   TelnetSession,
   UpdateInfo,
@@ -48,6 +50,7 @@ export const EVENTS = {
   CHECKIN_STATUS: "checkin://status",
   ADB_DATA: "adb://data",
   ADB_CLOSED: "adb://closed",
+  RZJ_PROGRESS: "rzj://progress",
 } as const;
 
 export const api = {
@@ -175,4 +178,10 @@ export const api = {
   adbShellOpen: () => invoke<void>("adb_shell_open"),
   adbShellWrite: (data: number[]) => invoke<void>("adb_shell_write", { data }),
   adbShellClose: () => invoke<void>("adb_shell_close"),
+
+  /** 入住机一键安装：设备列表 / 版本清单 / 发起安装（进度见 EVENTS.RZJ_PROGRESS） */
+  rzjDevices: () => invoke<RzjDevice[]>("rzj_devices"),
+  rzjReleases: () => invoke<RzjRelease[]>("rzj_releases"),
+  rzjInstall: (serial: string, url: string) =>
+    invoke<void>("rzj_install", { serial, url }),
 };

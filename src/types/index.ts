@@ -250,3 +250,19 @@ export interface TelnetSession {
   port: number;
   connected: boolean;
 }
+
+/** adb 连接设备（入住机安装面板） */
+export interface RzjDevice {
+  serial: string;
+  status: string;
+  /** "usb" | "tcp" */
+  transport: string;
+}
+
+/** 可安装的入住机版本 */
+export interface RzjRelease {
+  key: string;
+  name: string;
+  version: string;
+  url: string;
+}
