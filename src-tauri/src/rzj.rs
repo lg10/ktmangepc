@@ -147,6 +147,7 @@ impl Default for RzjService {
             waiters: Mutex::new(HashMap::new()),
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(15))
+                .timeout(std::time::Duration::from_secs(15))
                 .build()
                 .expect("HTTP 客户端初始化失败"),
         }
@@ -157,11 +158,15 @@ impl RzjService {
     /// 设备列表：执行内置 `adb devices`
     pub async fn devices(&self, app: &AppHandle) -> Result<Vec<RzjDevice>, String> {
         let adb = adb_binary(app)?;
-        let out = tokio::process::Command::new(&adb)
-            .arg("devices")
-            .output()
-            .await
-            .map_err(|e| format!("adb 执行失败: {e}"))?;
+        let out = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::process::Command::new(&adb)
+                .arg("devices")
+                .output()
+                .await
+        })
+        .await
+        .map_err(|_| "adb 响应超时".to_string())?
+        .map_err(|e| format!("adb 执行失败: {e}"))?;
         Ok(parse_devices(&String::from_utf8_lossy(&out.stdout)))
     }
 
@@ -172,10 +177,12 @@ impl RzjService {
             .get(MANIFEST_URL)
             .send()
             .await
-            .map_err(|_| "清单请求失败，请检查网络".to_string())?
+            .map_err(|e| format!("清单请求失败，请检查网络: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("清单请求失败: HTTP {}: {e}", e.status().map(|s| s.as_u16()).unwrap_or(0)))?
             .json()
             .await
-            .map_err(|_| "清单解析失败".to_string())?;
+            .map_err(|e| format!("清单解析失败: {e}"))?;
         let install = v
             .get("install")
             .and_then(|i| i.as_object())
