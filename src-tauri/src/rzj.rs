@@ -8,6 +8,15 @@
 
 use serde::Serialize;
 
+use crate::events;
+use crate::state::AppState;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{Mutex, OnceCell};
+
 /// 清单地址（注意：服务端文件名为 lastest.json，非拼写错误）
 pub const MANIFEST_URL: &str = "https://d.kingint.com/app/rzj/lastest.json";
 /// 入住机包名（安装后拉起用）
@@ -66,6 +75,148 @@ fn parse_install_percent(chunk: &str) -> Option<u8> {
         return None;
     }
     tail.chars().rev().collect::<String>().parse().ok()
+}
+
+/// 进度事件载荷
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RzjProgressPayload {
+    serial: String,
+    stage: String, // download | install | launch | done | error
+    percent: u8,
+    message: String,
+}
+
+fn emit(app: &AppHandle, serial: &str, stage: &str, percent: u8, message: String) {
+    let _ = app.emit(
+        events::RZJ_PROGRESS,
+        RzjProgressPayload {
+            serial: serial.to_string(),
+            stage: stage.to_string(),
+            percent,
+            message,
+        },
+    );
+}
+
+/// 内置 adb 可执行文件路径
+fn adb_binary(app: &AppHandle) -> Result<PathBuf, String> {
+    let name = if cfg!(windows) { "adb.exe" } else { "adb" };
+    Ok(crate::adbshell::resolve_adb_dir(app)?.join(name))
+}
+
+/// 下载缓存目录：AppData/rzj-cache
+fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取数据目录失败: {e}"))?
+        .join("rzj-cache");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建缓存目录失败: {e}"))?;
+    Ok(dir)
+}
+
+/// 清空缓存目录内其他 .apk 与残留 .part（版本更新后旧包不堆积）
+fn clean_cache(dir: &Path, keep: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        let is_old_apk = p.extension().map(|x| x == "apk").unwrap_or(false) && p != keep;
+        let is_part = p.to_string_lossy().ends_with(".part");
+        if is_old_apk || is_part {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+pub struct RzjService {
+    /// 进行中的安装任务（防同设备重复发起）
+    running: Mutex<HashSet<String>>,
+    /// URL -> 共享下载结果（多设备同 URL 只下一次）
+    downloads: Mutex<HashMap<String, Arc<OnceCell<PathBuf>>>>,
+    /// URL -> 等待者序列号列表（下载进度广播用）
+    waiters: Mutex<HashMap<String, Vec<String>>>,
+    http: reqwest::Client,
+}
+
+impl Default for RzjService {
+    fn default() -> Self {
+        Self {
+            running: Mutex::new(HashSet::new()),
+            downloads: Mutex::new(HashMap::new()),
+            waiters: Mutex::new(HashMap::new()),
+            http: reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("HTTP 客户端初始化失败"),
+        }
+    }
+}
+
+impl RzjService {
+    /// 设备列表：执行内置 `adb devices`
+    pub async fn devices(&self, app: &AppHandle) -> Result<Vec<RzjDevice>, String> {
+        let adb = adb_binary(app)?;
+        let out = tokio::process::Command::new(&adb)
+            .arg("devices")
+            .output()
+            .await
+            .map_err(|e| format!("adb 执行失败: {e}"))?;
+        Ok(parse_devices(&String::from_utf8_lossy(&out.stdout)))
+    }
+
+    /// 版本清单：拉取 lastest.json 的 install 映射
+    pub async fn releases(&self) -> Result<Vec<RzjRelease>, String> {
+        let v: serde_json::Value = self
+            .http
+            .get(MANIFEST_URL)
+            .send()
+            .await
+            .map_err(|_| "清单请求失败，请检查网络".to_string())?
+            .json()
+            .await
+            .map_err(|_| "清单解析失败".to_string())?;
+        let install = v
+            .get("install")
+            .and_then(|i| i.as_object())
+            .ok_or("清单缺少 install 字段")?;
+        let mut list = Vec::new();
+        for (key, item) in install {
+            let url = item.get("url").and_then(|x| x.as_str()).unwrap_or_default();
+            if url.is_empty() {
+                continue;
+            }
+            list.push(RzjRelease {
+                key: key.clone(),
+                name: item
+                    .get("name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or(key)
+                    .to_string(),
+                version: item
+                    .get("version")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                url: url.to_string(),
+            });
+        }
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(list)
+    }
+}
+
+#[tauri::command]
+pub async fn rzj_devices(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<RzjDevice>, String> {
+    state.rzj.devices(&app).await
+}
+
+#[tauri::command]
+pub async fn rzj_releases(state: State<'_, AppState>) -> Result<Vec<RzjRelease>, String> {
+    state.rzj.releases().await
 }
 
 #[cfg(test)]

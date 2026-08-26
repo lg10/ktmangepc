@@ -8,6 +8,7 @@ use crate::dhcp::DhcpService;
 use crate::filestore::FileStore;
 use crate::hotel::HotelService;
 use crate::inetshare::InetShareService;
+use crate::rzj::RzjService;
 use crate::telnet::TelnetService;
 use crate::udp::UdpService;
 use crate::upgrade::UpdateService;
@@ -26,4 +27,5 @@ pub struct AppState {
     pub inetshare: Arc<InetShareService>,
     pub checkin: Arc<CheckinService>,
     pub adbshell: Arc<AdbShellService>,
+    pub rzj: Arc<RzjService>,
 }

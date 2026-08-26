@@ -46,6 +46,7 @@ pub fn run() {
                 inetshare: Arc::new(inetshare::InetShareService::default()),
                 checkin: Arc::new(checkin::CheckinService::default()),
                 adbshell: Arc::new(adbshell::AdbShellService::default()),
+                rzj: Arc::new(rzj::RzjService::default()),
                 db,
             };
             // 启动即恢复本地登录态（供 Splash 校验）
@@ -144,6 +145,9 @@ pub fn run() {
             adbshell::adb_shell_open,
             adbshell::adb_shell_write,
             adbshell::adb_shell_close,
+            // 入住机一键安装
+            rzj::rzj_devices,
+            rzj::rzj_releases,
         ])
         .on_window_event(|window, event| {
             // DHCP/中继运行中拦截关窗：前端弹「正在恢复」等待弹窗，
