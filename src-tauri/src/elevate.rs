@@ -8,11 +8,13 @@
 //! - Linux：pkexec（polkit 图形弹窗），无 pkexec 时退回 sudo
 
 /// shell 单引号转义
+#[cfg(target_os = "macos")]
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// AppleScript 字符串字面量转义（双引号包裹）
+#[cfg(target_os = "macos")]
 fn applescript_quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }

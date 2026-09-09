@@ -14,11 +14,13 @@
   Call KTKillAdbServer
 !macroend
 
+; NSIS 规则：卸载段内 Call 的函数名必须以 un. 开头，
+; 故安装/卸载各定义一份入口函数，主体用宏复用
 !macro NSIS_HOOK_PREUNINSTALL
-  Call KTKillAdbServer
+  Call un.KTKillAdbServer
 !macroend
 
-Function KTKillAdbServer
+!macro KTKillAdbServerBody
   ; Windows 下 tauri 资源目录即 exe 同目录（tauri-utils platform::resource_dir），
   ; 映射 "resources/adb": "adb" → $INSTDIR\adb
   IfFileExists "$INSTDIR\adb\adb.exe" 0 +3
@@ -27,4 +29,12 @@ Function KTKillAdbServer
   ; 兜底强杀残留守护（含 kill-server 无应答的卡死 server）
   nsExec::ExecToLog 'taskkill /F /IM adb.exe /T'
   Pop $0
+!macroend
+
+Function KTKillAdbServer
+  !insertmacro KTKillAdbServerBody
+FunctionEnd
+
+Function un.KTKillAdbServer
+  !insertmacro KTKillAdbServerBody
 FunctionEnd

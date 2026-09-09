@@ -128,6 +128,7 @@ fn firewall_rule(add: bool) {
         .output();
 }
 
+#[cfg(target_os = "macos")]
 const MACOS_NAT_PLIST: &str = "/Library/Preferences/SystemConfiguration/com.apple.nat";
 
 /// macOS：写 com.apple.nat 配置并引导 InternetSharing 守护进程（助手已 root）
