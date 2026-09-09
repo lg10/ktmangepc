@@ -105,6 +105,18 @@ fn adb_binary(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(crate::adbshell::resolve_adb_dir(app)?.join(name))
 }
 
+/// 构造 adb 命令：Windows 下加 CREATE_NO_WINDOW。
+/// adb.exe 是控制台程序，GUI 子系统下裸 spawn 会闪一下黑色控制台窗口
+fn adb_command(adb: &Path) -> tokio::process::Command {
+    // 非 Windows 平台不会调用 creation_flags，mut 未使用，压掉警告
+    #[allow(unused_mut)]
+    let mut cmd = tokio::process::Command::new(adb);
+    // tokio 的 creation_flags 是 Windows 专属固有方法，无需引 trait
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    cmd
+}
+
 /// 下载缓存目录：AppData/rzj-cache
 fn cache_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
@@ -161,7 +173,7 @@ impl RzjService {
     pub async fn devices(&self, app: &AppHandle) -> Result<Vec<RzjDevice>, String> {
         let adb = adb_binary(app)?;
         let out = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            tokio::process::Command::new(&adb)
+            adb_command(&adb)
                 .arg("devices")
                 .output()
                 .await
@@ -383,7 +395,7 @@ impl RzjService {
     /// `adb -s <serial> install -r <apk>`，流式解析百分比推进度
     async fn install_apk(&self, app: &AppHandle, serial: &str, apk: &Path) -> Result<(), String> {
         let adb = adb_binary(app)?;
-        let mut child = tokio::process::Command::new(&adb)
+        let mut child = adb_command(&adb)
             .args(["-s", serial, "install", "-r"])
             .arg(apk)
             .stdout(std::process::Stdio::piped())
@@ -434,7 +446,7 @@ impl RzjService {
     async fn launch(&self, app: &AppHandle, serial: &str) -> Result<(), String> {
         let adb = adb_binary(app)?;
         let out = tokio::time::timeout(std::time::Duration::from_secs(30), async {
-            tokio::process::Command::new(&adb)
+            adb_command(&adb)
                 .args([
                     "-s", serial, "shell", "monkey", "-p", PACKAGE,
                     "-c", "android.intent.category.LAUNCHER", "1",

@@ -244,8 +244,11 @@ pub async fn open_url(url: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW：cmd 是控制台程序，裸 spawn 会闪一下黑色控制台窗口
         std::process::Command::new("cmd")
             .args(["/C", "start", "", &url])
+            .creation_flags(0x0800_0000)
             .spawn()
             .map_err(|e| e.to_string())?;
     }

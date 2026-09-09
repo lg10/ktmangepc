@@ -34,6 +34,11 @@ struct AdbClosedPayload {
 struct ShellSession {
     writer: Box<dyn Write + Send>,
     killer: Box<dyn portable_pty::ChildKiller + Send>,
+    // Windows（ConPTY）：HPCON 句柄挂在 master 内部 Arc 上，master 被 drop 即触发
+    // ClosePseudoConsole。spawn 后立刻 drop 会让 cmd.exe 在启动连接阶段弹
+    // 0xc0000142 对话框（见 MS 文档 Creating a Pseudoconsole session），
+    // 必须随会话同生命周期持有；unix 下仅多持一份 fd 引用，无副作用
+    _master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
 #[derive(Default)]
@@ -92,6 +97,7 @@ impl AdbShellService {
             *session = Some(ShellSession {
                 writer,
                 killer: child.clone_killer(),
+                _master: pair.master,
             });
         }
 
