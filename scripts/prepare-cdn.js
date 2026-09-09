@@ -12,7 +12,8 @@
  *
  * 产出 dist-cdn/（整个目录内容上传到 CDN 根路径即可）：
  *   latest.json   （platforms：签名更新包，供自动更新；install：与 platforms 同级同构，
- *                   指向完整安装包 dmg/exe/AppImage/deb，供首装下载）
+ *                   指向完整安装包 dmg/exe/AppImage/deb，供首装下载；
+ *                   display：与 install 同级的展示元信息，供门户/商店页渲染）
  *   mac/       kt-mange-pc-<arch>.app.tar.gz（更新包） / kt-mange-pc-<arch>.dmg（首装）
  *   windows/   kt-mange-pc-<arch>.nsis.zip（更新包） / kt-mange-pc-<arch>-setup.exe（首装）
  *   linux/     kt-mange-pc-<arch>.AppImage.tar.gz（更新包） / .AppImage / .deb（首装）
@@ -131,6 +132,17 @@ function firstGlob(dir, pred) {
 
 // install：与 platforms 同级的完整安装包清单（结构一致，url 指向首装包；无 signature）
 merged.install = {};
+
+// display：与 install 同级的展示元信息，供门户/商店页渲染（名称、图标、标签、主页等）
+merged.display = {
+  name: "肯天工程扫描工具（原肯天玉佩）",
+  subtitle: "工程协作桌面客户端",
+  icon: "logo.png",
+  order: 10,
+  visible: true,
+  tags: ["推荐", "桌面端"],
+  homepage: "https://kingint.com/mange",
+};
 
 for (const [key, plat] of Object.entries(merged.platforms)) {
   const dir = DIR_OF(key);
