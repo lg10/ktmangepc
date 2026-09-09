@@ -310,13 +310,18 @@ async function installUpdate() {
   dlTotal.value = 0;
   dlDone.value = 0;
   try {
-    await pendingUpdate.value.downloadAndInstall((e) => {
+    // 拆分 download/install： updater 在 Windows 拉起安装器后直接硬退出进程
+    // （不走 RunEvent::Exit 清理），故在下载完成后、install 前主动释放
+    // adb server 常驻守护，避免安装目录被句柄锁定弹“无法写入”
+    await pendingUpdate.value.download((e) => {
       if (e.event === "Started" && e.data.contentLength) {
         dlTotal.value = e.data.contentLength;
       } else if (e.event === "Progress") {
         dlDone.value += e.data.chunkLength;
       }
     });
+    await api.adbKillServer().catch(() => {});
+    await pendingUpdate.value.install();
     toast({ title: "下载完成，正在重启安装…", variant: "success" });
     await relaunch();
   } catch (e) {

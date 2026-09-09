@@ -178,6 +178,8 @@ export const api = {
   adbShellOpen: () => invoke<void>("adb_shell_open"),
   adbShellWrite: (data: number[]) => invoke<void>("adb_shell_write", { data }),
   adbShellClose: () => invoke<void>("adb_shell_close"),
+  /** 释放 adb server 常驻守护（升级安装前调用，避免 Windows 文件锁） */
+  adbKillServer: () => invoke<void>("adb_kill_server"),
 
   /** 入住机一键安装：设备列表 / 版本清单 / 发起安装（进度见 EVENTS.RZJ_PROGRESS） */
   rzjDevices: () => invoke<RzjDevice[]>("rzj_devices"),

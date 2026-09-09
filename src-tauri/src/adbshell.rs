@@ -207,3 +207,38 @@ pub async fn adb_shell_close(state: State<'_, crate::state::AppState>) -> Result
     state.adbshell.close().await;
     Ok(())
 }
+
+/// 尽力释放 adb server 常驻守护（Windows 文件锁治理）：
+/// adb server 启动后常驻，长期持有安装目录内 adb.exe / AdbWinApi.dll /
+/// AdbWinUsbApi.dll 句柄，导致 NSIS 覆盖安装/卸载弹“无法写入”对话框。
+/// kill-server 经 TCP 让守护自退；无 server 时报错直接忽略。
+/// 分离式 spawn 不等退出：供 RunEvent::Exit 同步上下文使用（子进程在主程序退出后仍会完成 kill）
+pub fn kill_server_detached(app: &AppHandle) {
+    let Ok(dir) = resolve_adb_dir(app) else { return };
+    let mut cmd = std::process::Command::new(dir.join(adb_exe_name()));
+    cmd.arg("kill-server");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let _ = cmd.spawn();
+}
+
+fn adb_exe_name() -> &'static str {
+    if cfg!(windows) { "adb.exe" } else { "adb" }
+}
+
+/// 前端命令：自动升级 install() 前调用，同步等待释放完成（限 3s，超时也视为成功，
+/// 安装器钩子还会兜底）；updater 在 Windows 拉起安装器后直接 process::exit，
+/// 不走 RunEvent::Exit 清理，故释放点必须放在 install 之前
+#[tauri::command]
+pub async fn adb_kill_server(app: AppHandle) -> Result<(), String> {
+    let dir = resolve_adb_dir(&app)?;
+    let mut cmd = tokio::process::Command::new(dir.join(adb_exe_name()));
+    cmd.arg("kill-server");
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), cmd.output()).await;
+    Ok(())
+}

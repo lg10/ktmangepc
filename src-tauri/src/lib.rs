@@ -145,6 +145,7 @@ pub fn run() {
             adbshell::adb_shell_open,
             adbshell::adb_shell_write,
             adbshell::adb_shell_close,
+            adbshell::adb_kill_server,
             // 入住机一键安装
             rzj::rzj_devices,
             rzj::rzj_releases,
@@ -170,6 +171,10 @@ pub fn run() {
             let state = app_handle.state::<AppState>();
             state.inetshare.exit_cleanup(app_handle);
             state.dhcp.exit_cleanup(app_handle);
+            // Windows：退出时释放 adb server 常驻守护，避免升级/卸载时
+            // 安装目录被守护进程句柄锁定（NSIS 弹“无法写入”对话框）
+            #[cfg(windows)]
+            crate::adbshell::kill_server_detached(app_handle);
         }
     });
 }
