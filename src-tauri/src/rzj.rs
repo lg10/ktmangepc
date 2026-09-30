@@ -17,8 +17,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, OnceCell};
 
-/// 清单地址（注意：服务端文件名为 lastest.json，非拼写错误）
-pub const MANIFEST_URL: &str = "https://d.kingint.com/app/rzj/lastest.json";
+/// 清单地址
+pub const MANIFEST_URL: &str = "https://d.kingint.com/app/rzj/latest.json";
 /// 入住机包名（安装后拉起用）
 pub const PACKAGE: &str = "com.kingint.checkin4";
 
@@ -184,7 +184,7 @@ impl RzjService {
         Ok(parse_devices(&String::from_utf8_lossy(&out.stdout)))
     }
 
-    /// 版本清单：拉取 lastest.json 的 install 映射
+    /// 版本清单：拉取 latest.json 的 install 映射
     pub async fn releases(&self) -> Result<Vec<RzjRelease>, String> {
         let v: serde_json::Value = self
             .http

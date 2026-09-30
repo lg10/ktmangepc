@@ -5,13 +5,13 @@
 
 ## 背景与目标
 
-在现有 ADB 终端弹窗（`AdbTerminalDialog.vue`）标题行右上角新增「已连接设备」按钮，点击后在弹窗内右侧滑出设备面板，展示内置 adb 已连接的设备列表（序列号 / 状态 / 连接方式）。正常连接（`device`）状态的设备提供「安装入住机」按钮：点击后从 `https://d.kingint.com/app/rzj/lastest.json` 拉取可安装版本列表供选择，确认后进入「下载 → 安装 → 拉起」流水线，按钮位置以进度条展示下载与安装进度。
+在现有 ADB 终端弹窗（`AdbTerminalDialog.vue`）标题行右上角新增「已连接设备」按钮，点击后在弹窗内右侧滑出设备面板，展示内置 adb 已连接的设备列表（序列号 / 状态 / 连接方式）。正常连接（`device`）状态的设备提供「安装入住机」按钮：点击后从 `https://d.kingint.com/app/rzj/latest.json` 拉取可安装版本列表供选择，确认后进入「下载 → 安装 → 拉起」流水线，按钮位置以进度条展示下载与安装进度。
 
 ## 已确认的需求决策
 
 | 决策点 | 结论 |
 |---|---|
-| 清单接口 | `https://d.kingint.com/app/rzj/lastest.json`（注意是 lastest 拼写）；`install` 为对象映射，条目含 `name` / `version` / `url` |
+| 清单接口 | `https://d.kingint.com/app/rzj/latest.json`；`install` 为对象映射，条目含 `name` / `version` / `url` |
 | 拉起方式 | 包名固定 `com.kingint.checkin4`，安装后 `adb shell monkey -p com.kingint.checkin4 -c android.intent.category.LAUNCHER 1` |
 | 设备名称 | 仅展示序列号（不查 getprop） |
 | 连接方式 | 序列号含 `:` 判为网络（tcp），否则 USB |
