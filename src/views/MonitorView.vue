@@ -286,19 +286,19 @@ const visibleColumns = computed(() =>
   })
 );
 
-const allChecked = computed(
-  () =>
-    filteredDevices.value.length > 0 &&
-    filteredDevices.value.every((d) => selected.value.has(d.equipId))
-);
+/** 表头全选作用于所在分组；不分组时只有一个「全量」分组，等价于全选 */
+function groupAllChecked(devices: RcuDevice[]) {
+  return devices.length > 0 && devices.every((d) => selected.value.has(d.equipId));
+}
 
-function toggleAll() {
-  if (allChecked.value) {
-    for (const d of filteredDevices.value) selected.value.delete(d.equipId);
-  } else {
-    for (const d of filteredDevices.value) selected.value.add(d.equipId);
+function toggleGroupAll(devices: RcuDevice[]) {
+  const next = new Set(selected.value);
+  const clear = groupAllChecked(devices);
+  for (const d of devices) {
+    if (clear) next.delete(d.equipId);
+    else next.add(d.equipId);
   }
-  selected.value = new Set(selected.value);
+  selected.value = next;
 }
 
 function toggle(id: string) {
@@ -602,7 +602,7 @@ const primaryCount = computed(() =>
           <thead class="sticky top-0 bg-background z-10">
             <tr class="text-left text-xs text-muted-foreground border-b">
               <th class="py-2.5 px-3 w-10">
-                <input type="checkbox" :checked="allChecked" title="全选" @change="toggleAll" />
+                <input type="checkbox" :checked="groupAllChecked(g.devices)" title="全选本组" @change="toggleGroupAll(g.devices)" />
               </th>
               <th
                 v-for="c in visibleColumns"
