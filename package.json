@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
+    "test": "node --test src/lib/telnetCompletion.test.ts src/lib/logHighlight.test.ts src/lib/rcuInfo.test.ts",
     "tauri": "tauri",
     "build:release": "TAURI_SIGNING_PRIVATE_KEY=\"$(cat src-tauri/keys/kt-mange-pc.key)\" tauri build",
     "build:release:mac": "TAURI_SIGNING_PRIVATE_KEY=\"$(cat src-tauri/keys/kt-mange-pc.key)\" tauri build --target aarch64-apple-darwin && TAURI_SIGNING_PRIVATE_KEY=\"$(cat src-tauri/keys/kt-mange-pc.key)\" tauri build --target x86_64-apple-darwin",
