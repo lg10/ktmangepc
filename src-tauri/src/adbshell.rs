@@ -60,6 +60,10 @@ impl AdbShellService {
         let shell = shell_program();
 
         let mut cmd = CommandBuilder::new(&shell);
+        // Windows：/d 跳过 cmd AutoRun，避免机器级启动脚本重写 PATH 抹掉注入项
+        // （代价是该终端的 AutoRun 定制如 Clink/别名不会生效）
+        #[cfg(windows)]
+        cmd.arg("/d");
         if let Some(home) = home_dir() {
             cmd.cwd(home);
         }
@@ -67,7 +71,7 @@ impl AdbShellService {
         let path_var = if cfg!(windows) { "Path" } else { "PATH" };
         let old_path = std::env::var(path_var).unwrap_or_default();
         let sep = if cfg!(windows) { ";" } else { ":" };
-        cmd.env(path_var, format!("{}{}{}", adb_dir.display(), sep, old_path));
+        cmd.env(path_var, format!("{}{}{}", env_path(&adb_dir), sep, old_path));
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -174,6 +178,20 @@ pub(crate) fn resolve_adb_dir(app: &AppHandle) -> Result<std::path::PathBuf, Str
         .ok_or_else(|| "内置 adb 路径异常".into())
 }
 
+/// Windows 下 Tauri 资源路径经 `canonicalize()` 后带 `\\?\` verbatim 前缀。
+/// 绝对路径 spawn 不受影响，但 cmd.exe 在 PATH 中不认 verbatim 目录，
+/// 敲 `adb` 会报「不是内部或外部命令」，注入前必须还原成普通路径
+fn env_path(dir: &std::path::Path) -> String {
+    let s = dir.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.into_owned()
+    }
+}
+
 fn shell_program() -> String {
     if cfg!(windows) {
         "cmd.exe".to_string()
@@ -241,4 +259,29 @@ pub async fn adb_kill_server(app: AppHandle) -> Result<(), String> {
     cmd.creation_flags(0x0800_0000);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), cmd.output()).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::env_path;
+    use std::path::Path;
+
+    #[test]
+    fn strips_verbatim_drive_prefix() {
+        assert_eq!(
+            env_path(Path::new(r"\\?\C:\Users\a\AppData\Local\KT Device Scan\adb")),
+            r"C:\Users\a\AppData\Local\KT Device Scan\adb"
+        );
+    }
+
+    #[test]
+    fn maps_verbatim_unc_prefix() {
+        assert_eq!(env_path(Path::new(r"\\?\UNC\srv\share\adb")), r"\\srv\share\adb");
+    }
+
+    #[test]
+    fn keeps_plain_paths_unchanged() {
+        assert_eq!(env_path(Path::new(r"C:\Users\a\adb")), r"C:\Users\a\adb");
+        assert_eq!(env_path(Path::new("/Applications/App.app/Resources/adb")), "/Applications/App.app/Resources/adb");
+    }
 }

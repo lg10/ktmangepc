@@ -31,8 +31,38 @@ let fit: FitAddon | null = null;
 let ro: ResizeObserver | null = null;
 let unlistenData: UnlistenFn | null = null;
 let unlistenClosed: UnlistenFn | null = null;
+let quickTimer: ReturnType<typeof setTimeout> | null = null;
 
 const encoder = new TextEncoder();
+
+/** 底部快捷命令：命令在弹窗内 shell 里回显执行，pipeline 放在设备侧，避免依赖本机 grep */
+const quickCommands = [
+  {
+    label: "打开设置",
+    command: "adb shell am start -a android.settings.SETTINGS",
+  },
+  {
+    label: "打开 App",
+    command: "adb shell monkey -p com.kingint.checkin4 -c android.intent.category.LAUNCHER 1",
+  },
+  {
+    label: "查看摄像头",
+    command: `adb shell "dumpsys media.camera | grep -Ei 'camera id|camera [0-9]|facing|external'"`,
+  },
+  { label: "重启", command: "adb reboot" },
+];
+
+/** 发送快捷命令：先 Ctrl+C 清掉当前输入行/前台命令，避免与半截输入拼接 */
+function runQuick(command: string) {
+  if (!term || closed.value || openError.value) return;
+  term.focus();
+  if (quickTimer) clearTimeout(quickTimer);
+  void api.adbShellWrite([3]).catch(() => {});
+  quickTimer = setTimeout(() => {
+    quickTimer = null;
+    void api.adbShellWrite([...Array.from(encoder.encode(command)), 13]).catch(() => {});
+  }, 60);
+}
 
 function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -103,6 +133,10 @@ watch(
 
 /** 清理终端资源；kill=true 时同时杀掉 shell 进程（关窗即销毁） */
 async function teardown(kill: boolean) {
+  if (quickTimer) {
+    clearTimeout(quickTimer);
+    quickTimer = null;
+  }
   unlistenData?.();
   unlistenClosed?.();
   unlistenData = unlistenClosed = null;
@@ -130,10 +164,13 @@ onBeforeUnmount(() => {
 <template>
   <Dialog :open="uiStore.adbTerminalOpen" @update:open="uiStore.adbTerminalOpen = $event">
     <DialogContent
-      class="max-w-6xl w-[80vw] h-[80vh] flex flex-col gap-0 p-0 overflow-hidden"
+      class="max-w-6xl w-[80vw] h-[calc(80vh+2rem)] flex flex-col gap-0 p-0 overflow-hidden"
       :show-close="!panelOpen"
     >
-      <div class="shrink-0 flex items-center px-6 pt-4 pb-2">
+      <div
+        class="shrink-0 flex items-center pb-2 pt-4"
+        :class="panelOpen ? 'pl-6 pr-6' : 'pl-6 pr-12'"
+      >
         <DialogTitle class="text-base">ADB 终端</DialogTitle>
         <span class="ml-2 text-xs text-muted-foreground">
           内置 adb 已注入 PATH，直接敲 adb 即可使用
@@ -149,7 +186,7 @@ onBeforeUnmount(() => {
         </Button>
       </div>
 
-      <div class="flex-1 min-h-0 px-4 pb-4">
+      <div class="flex-1 min-h-0 px-4 pb-3">
         <div class="relative h-full rounded-md overflow-hidden">
           <div ref="hostRef" class="absolute inset-0" />
 
@@ -177,6 +214,21 @@ onBeforeUnmount(() => {
             <p class="text-xs text-destructive max-w-md text-center">{{ openError }}</p>
           </div>
         </div>
+      </div>
+
+      <div class="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-t bg-muted/20 px-2">
+        <span class="shrink-0 pr-1 text-[10px] text-muted-foreground/70">快捷命令</span>
+        <button
+          v-for="q in quickCommands"
+          :key="q.label"
+          type="button"
+          class="flex h-6 shrink-0 items-center rounded-full border border-border/70 bg-background px-2.5 text-[11px] text-foreground/80 transition-colors hover:border-primary/40 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          :title="q.command"
+          :disabled="closed || !!openError"
+          @click="runQuick(q.command)"
+        >
+          {{ q.label }}
+        </button>
       </div>
 
       <AdbDevicePanel v-model:open="panelOpen" />
