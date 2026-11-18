@@ -43,6 +43,7 @@ export const EVENTS = {
   EXIT_BLOCKED: "app://exit-blocked",
   FILE_FETCH_PROGRESS: "file://fetch-progress",
   TASK_UPDATE: "task://update",
+  TASK_PROGRESS: "task://progress",
   TELNET_DATA: "telnet://data",
   TELNET_CLOSED: "telnet://closed",
   CHECKIN_DEVICE: "checkin://device",

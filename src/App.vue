@@ -19,6 +19,7 @@ import type {
   RcuDevice,
   ServerStatus,
   UpdateTask,
+  UpdateTaskProgress,
   UserInfo,
 } from "@/types";
 import Toaster from "@/components/ui/toast/Toaster.vue";
@@ -69,6 +70,10 @@ onMounted(async () => {
         uiStore.openDock("tasks");
       }
     }),
+    // 增量进度：只 patch 变化的行，支持高频刷新
+    listen<UpdateTaskProgress[]>(EVENTS.TASK_PROGRESS, (e) =>
+      taskStore.patchProgress(e.payload)
+    ),
     listen<{ id: string; reason: string }>(EVENTS.TELNET_CLOSED, (e) =>
       telnetStore.markClosed(e.payload.id, e.payload.reason)
     ),

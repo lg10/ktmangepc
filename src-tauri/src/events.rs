@@ -15,6 +15,8 @@ pub const INET_STATUS: &str = "inet://status";
 // 阶段二
 pub const FILE_FETCH_PROGRESS: &str = "file://fetch-progress";
 pub const TASK_UPDATE: &str = "task://update";
+// 任务增量进度（只含本次变化的设备行，避免整表重推）
+pub const TASK_PROGRESS: &str = "task://progress";
 pub const TELNET_DATA: &str = "telnet://data";
 pub const TELNET_CLOSED: &str = "telnet://closed";
 // 入住机 mDNS 发现

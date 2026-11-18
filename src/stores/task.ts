@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "@/lib/api";
-import type { FileKind, UpdateTask } from "@/types";
+import type { FileKind, UpdateTask, UpdateTaskProgress } from "@/types";
 
 /** 升级 / 配置任务状态（订阅 task://update 事件刷新） */
 export const useTaskStore = defineStore("task", {
@@ -15,6 +15,18 @@ export const useTaskStore = defineStore("task", {
   actions: {
     setTasks(tasks: UpdateTask[]) {
       this.tasks = tasks;
+    },
+    /** 增量进度：只改对应行，避免整表重渲染；已完成行不参与 patch */
+    patchProgress(updates: UpdateTaskProgress[]) {
+      for (const u of updates) {
+        const t = this.tasks.find(
+          (x) => x.kind === u.kind && x.equipId === u.equipId && x.startTime === u.startTime
+        );
+        if (!t || t.state > 1) continue;
+        t.state = u.state;
+        t.percent = u.percent;
+        t.progress = u.progress;
+      }
     },
     async refresh() {
       this.tasks = await api.listUpdateTasks();

@@ -203,6 +203,16 @@ export interface UpdateTask {
   endTime: number;
 }
 
+/** 任务增量进度（按行 patch，不整表刷新） */
+export interface UpdateTaskProgress {
+  kind: FileKind;
+  equipId: string;
+  startTime: number;
+  state: number;
+  percent: number;
+  progress: string;
+}
+
 /** 酒店房间映射（同步自云端） */
 export interface HotelRoom {
   equipId: string;
